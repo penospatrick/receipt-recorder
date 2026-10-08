@@ -465,7 +465,7 @@ app.get("/api/auth/me", requireAuth, (request, response) => response.json({ user
 app.post("/api/auth/login", loginLimiter, async (request, response) => {
   const username = typeof request.body?.username === "string" ? request.body.username.trim() : "";
   const password = typeof request.body?.password === "string" ? request.body.password : "";
-  const row = database.prepare(`
+  const row = await database.prepare(`
     SELECT u.id, u.password_salt, u.password_hash, u.active
     FROM users u WHERE u.username = ? COLLATE NOCASE
   `).get(username);

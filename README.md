@@ -21,7 +21,7 @@ When `SUPABASE_DB_URL` or `DATABASE_URL` is set to a PostgreSQL URI, the server 
 
 ## Deploy to Vercel
 
-This project can run on Vercel as an Express application backed by Supabase. Import the GitHub repository as a new Vercel project and use the repository root; Vercel detects the root `server.js` Express entry point. No build command or output directory is required. Vercel serves files in `public/` from its CDN, and the Express function handles API requests. Database schema and root-CA files are included in the function.
+This project can run on Vercel as an Express application backed by Supabase. Import the GitHub repository as a new Vercel project and use the repository root; Vercel detects the root `app.js` Express entry point. No build command or output directory is required. Vercel serves files in `public/` from its CDN, and the Express function handles API requests. Database schema and root-CA files are included in the function.
 
 Add these environment variables in **Project Settings → Environment Variables**:
 
@@ -31,6 +31,8 @@ Add these environment variables in **Project Settings → Environment Variables*
 - `SESSION_SECRET`: a unique random string of at least 32 characters.
 
 Set the variables for the Production environment. For Preview deployments, use a separate Supabase project/database so preview testing cannot modify production receipts. Vercel provides HTTPS; the app automatically marks authentication cookies as secure and uses one database connection per function instance. SQLite is intentionally rejected on Vercel because its filesystem is not persistent. After deployment, check `/api/health`, sign in, and verify receipt entry and Excel export.
+
+`ACCOUNTING_PASSWORD` is only used to create the initial administrator if that username is not already in the database. Changing the Vercel variable does not change an existing account's password; update it while signed in as an administrator.
 
 The server connects to PostgreSQL using `pg` and validates TLS against Supabase's public root CA (`certs/supabase-root-ca-2021.crt`); certificate verification stays enabled. The Supabase database password never reaches the browser. Row Level Security is enabled on the app tables. Keep the database connection string private and only use it as a server environment variable.
 
