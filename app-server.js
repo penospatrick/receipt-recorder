@@ -15,6 +15,7 @@ const bootstrapPassword = process.env.ACCOUNTING_PASSWORD;
 const sessionSecret = process.env.SESSION_SECRET;
 const isProduction = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
 const sessionCookie = "receipt_session";
+const bootstrapUsername = (process.env.ADMIN_USERNAME || "admin").trim();
 const permissions = [
   { key: "receipts:create", label: "Create receipts" },
   { key: "receipts:read_own", label: "View own receipts" },
@@ -74,8 +75,6 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
   return { salt, hash };
 }
-
-let bootstrapUsername = (process.env.ADMIN_USERNAME || "admin").trim();
 
 function findUserById(userId) {
   return database.prepare(`
