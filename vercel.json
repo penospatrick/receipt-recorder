@@ -1,8 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "app.js": {
-      "includeFiles": "{supabase-schema.sql,certs/supabase-root-ca-2021.crt}"
+    "api/index.js": {
+      "includeFiles": [
+        "public/**",
+        "supabase-schema.sql",
+        "certs/supabase-root-ca-2021.crt"
+      ]
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ]
 }
