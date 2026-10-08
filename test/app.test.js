@@ -10,6 +10,9 @@ process.env.ADMIN_USERNAME = "admin";
 process.env.SESSION_SECRET = "receipt-recorder-test-session-secret-32";
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-recorder-test-"));
 process.env.PORT = "0";
+process.env.SUPABASE_DB_URL = "";
+process.env.DATABASE_URL = "";
+process.env.SUPABASE_URL = "https://receipt-recorder-test.supabase.co";
 
 const { after, before, test } = require("node:test");
 const server = require("../server");

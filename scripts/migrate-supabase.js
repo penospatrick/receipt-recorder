@@ -6,7 +6,11 @@ const Database = require("better-sqlite3");
 const { Pool } = require("pg");
 
 async function main() {
-  if (!process.env.SUPABASE_DB_URL) {
+  const configuredSupabaseUrl = process.env.SUPABASE_URL || "";
+  const connectionString = process.env.SUPABASE_DB_URL ||
+    process.env.DATABASE_URL ||
+    (/^postgres(?:ql)?:\/\//i.test(configuredSupabaseUrl) ? configuredSupabaseUrl : "");
+  if (!connectionString) {
     throw new Error("Set SUPABASE_DB_URL in .env to your Supabase PostgreSQL connection string.");
   }
 
@@ -16,8 +20,11 @@ async function main() {
 
   const sqlite = new Database(sqlitePath, { readonly: true, fileMustExist: true });
   const postgres = new Pool({
-    connectionString: process.env.SUPABASE_DB_URL,
-    ssl: { rejectUnauthorized: true },
+    connectionString,
+    ssl: {
+      ca: fs.readFileSync(path.join(__dirname, "..", "certs", "supabase-root-ca-2021.crt"), "utf8"),
+      rejectUnauthorized: true
+    },
     connectionTimeoutMillis: 10000
   });
 

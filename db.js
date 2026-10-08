@@ -97,12 +97,19 @@ function translatePostgresQuery(sql, parameters) {
 
 class ReceiptDatabase {
   constructor() {
-    this.connectionString = process.env.SUPABASE_DB_URL;
+    const configuredUrl = process.env.SUPABASE_URL || "";
+    const supabaseUrlIsDatabaseUri = /^postgres(?:ql)?:\/\//i.test(configuredUrl);
+    this.connectionString = process.env.SUPABASE_DB_URL ||
+      process.env.DATABASE_URL ||
+      (supabaseUrlIsDatabaseUri ? configuredUrl : "");
     this.remote = Boolean(this.connectionString);
     if (this.remote) {
       this.pool = new Pool({
         connectionString: this.connectionString,
-        ssl: { rejectUnauthorized: true },
+        ssl: {
+          ca: fs.readFileSync(path.join(__dirname, "certs", "supabase-root-ca-2021.crt"), "utf8"),
+          rejectUnauthorized: true
+        },
         max: Number(process.env.DB_POOL_MAX || 10),
         connectionTimeoutMillis: 10000,
         idleTimeoutMillis: 30000
