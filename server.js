@@ -431,6 +431,7 @@ function healthDetails() {
   return {
     status: startupError ? "degraded" : "ok",
     service: "receipt-recorder",
+    version: process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_REF || "local",
     database: database
       ? { configured: Boolean(database.remote), type: database.remote ? "postgresql" : "sqlite" }
       : { configured: false, type: null },
