@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS public.receipts (
   created_by BIGINT REFERENCES public.users(id) ON DELETE SET NULL,
   created_by_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMPTZ
+  updated_at TIMESTAMPTZ,
+  image_url TEXT,
+  onedrive_file_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS receipts_date_idx
@@ -66,3 +68,10 @@ ALTER TABLE public.receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."groups" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.receipt_fields ENABLE ROW LEVEL SECURITY;
+
+
+CREATE TABLE IF NOT EXISTS public.onedrive_auth (
+  id INTEGER PRIMARY KEY CHECK (id = 1), access_token TEXT NOT NULL, refresh_token TEXT NOT NULL,
+  expires_at BIGINT NOT NULL, account_email TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE public.onedrive_auth ENABLE ROW LEVEL SECURITY;
