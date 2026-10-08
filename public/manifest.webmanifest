@@ -1,0 +1,17 @@
+{
+  "name": "Receipt Recorder",
+  "short_name": "Receipts",
+  "description": "Record receipts, manage access, and export filtered reports to Excel.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f5",
+  "theme_color": "#163b3a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

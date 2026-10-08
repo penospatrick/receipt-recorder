@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#163b3a">
+    <meta name="description" content="Record receipts, manage staff permissions and custom fields, and export filtered reports to Excel.">
+    <title>Receipt Recorder</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Receipt Recorder home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M7 3.75h10a1.25 1.25 0 0 1 1.25 1.25v15L15.5 18l-3.5 2-3.5-2-2.75 2V5A1.25 1.25 0 0 1 7 3.75Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 8h6M9 11.5h6M9 15h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </span>
+        <span>Receipt<span class="brand-light">Recorder</span></span>
+      </a>
+      <button class="account-button" id="account-button" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 3 8.1 7 10 4-1.9 7-5.5 7-10V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span id="session-button-label">Sign in</span>
+      </button>
+    </header>
+
+    <main class="page-shell">
+      <section class="welcome">
+        <div>
+          <p class="eyebrow">RECEIPT MANAGEMENT</p>
+          <h1>Good records start here.</h1>
+          <p class="welcome-copy">Capture each receipt now. Keep every entry ready for accounting.</p>
+        </div>
+        <div class="welcome-art" aria-hidden="true">
+          <span class="art-circle"></span>
+          <svg viewBox="0 0 116 116" fill="none"><path d="M31 16h52a6 6 0 0 1 6 6v76L75 88l-18 10-18-10-14 10V22a6 6 0 0 1 6-6Z" fill="#fff" stroke="#bad9cf" stroke-width="3" stroke-linejoin="round"/><path d="M42 38h31M42 52h31M42 66h20" stroke="#5b9484" stroke-width="4" stroke-linecap="round"/><circle cx="78" cy="78" r="19" fill="#163b3a"/><path d="m70 78 5 5 10-11" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+      </section>
+
+      <section class="dashboard" aria-label="Receipt entry and recent receipts">
+        <section class="card entry-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow" id="receipt-form-eyebrow">NEW ENTRY</p>
+              <h2 id="receipt-form-heading">Record a receipt</h2>
+            </div>
+            <span class="heading-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </span>
+          </div>
+          <form id="receipt-form">
+            <label for="receipt-date">Date <span class="required">*</span></label>
+            <input id="receipt-date" name="date" type="date" required>
+
+            <label for="si-or-number">SI / OR number <span class="required">*</span></label>
+            <input id="si-or-number" name="siOrNumber" type="text" maxlength="80" placeholder="e.g. OR-001234" autocomplete="off" required>
+
+            <label for="particulars">Particulars <span class="required">*</span></label>
+            <textarea id="particulars" name="particulars" rows="3" maxlength="1000" placeholder="What was this receipt for?" required></textarea>
+
+            <label for="amount">Amount <span class="required">*</span></label>
+            <div class="amount-input">
+              <span aria-hidden="true">₱</span>
+              <input id="amount" name="amount" type="number" min="0.01" max="1000000000" step="0.01" inputmode="decimal" placeholder="0.00" required>
+            </div>
+            <div id="custom-inputs"></div>
+            <button class="primary-button" id="save-button" type="submit">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Save receipt
+            </button>
+            <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
+            <button class="text-button cancel-edit-button" id="receipt-cancel-edit" type="button" hidden>Cancel editing</button>
+          </form>
+        </section>
+
+        <section class="card recent-card">
+          <div class="recent-heading">
+            <div>
+              <p class="eyebrow">YOUR REGISTER</p>
+              <h2>Recent receipts</h2>
+            </div>
+            <button class="refresh-button" id="refresh-button" type="button" aria-label="Refresh receipts" title="Refresh">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4.5 16a7.5 7.5 0 0 0 13 1L20 12M4 12V7h5m10.5 1a7.5 7.5 0 0 0-13-1L4 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+          <section class="export-panel" id="export-panel" hidden>
+            <div class="export-panel-heading">
+              <div>
+                <p class="eyebrow">ACCOUNTING</p>
+                <h3>Filter Excel export</h3>
+              </div>
+              <span class="export-access"><span class="status-dot"></span>Export access</span>
+            </div>
+            <form id="export-filter-form" class="filter-grid">
+              <div><label for="filter-from">Date from</label><input id="filter-from" type="date"></div>
+              <div><label for="filter-to">Date to</label><input id="filter-to" type="date"></div>
+              <div><label for="filter-si-or">SI / OR contains</label><input id="filter-si-or" type="search" placeholder="Any number"></div>
+              <div><label for="filter-particulars">Particulars contain</label><input id="filter-particulars" type="search" placeholder="Any text"></div>
+              <div><label for="filter-amount-min">Minimum amount</label><input id="filter-amount-min" type="number" min="0" step="0.01" placeholder="No minimum"></div>
+              <div><label for="filter-amount-max">Maximum amount</label><input id="filter-amount-max" type="number" min="0" step="0.01" placeholder="No maximum"></div>
+              <div id="filter-group-wrap"><label for="filter-group">User group</label><select id="filter-group"><option value="">All groups</option></select></div>
+              <div id="filter-user-wrap"><label for="filter-user">Entered by</label><select id="filter-user"><option value="">All users</option></select></div>
+              <div class="custom-filter-grid" id="custom-filters"></div>
+              <div class="filter-actions">
+                <button class="secondary-button" id="clear-filters" type="button">Clear filters</button>
+                <button class="secondary-button" id="preview-filters" type="button">Preview matching receipts</button>
+                <button class="primary-button export-button" id="export-button" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  Download filtered Excel
+                </button>
+              </div>
+            </form>
+            <p class="modal-message" id="export-message" role="status" aria-live="polite"></p>
+          </section>
+          <div class="summary-strip">
+            <div><span class="summary-label">Receipts recorded</span><strong id="receipt-count">—</strong></div>
+            <div><span class="summary-label">Total recorded</span><strong id="receipt-total">—</strong></div>
+          </div>
+          <div class="receipt-list" id="receipt-list" aria-live="polite">
+            <div class="loading-state">Loading your register…</div>
+          </div>
+          <p class="list-note">Showing receipts you have permission to view.</p>
+        </section>
+      </section>
+      <section class="card admin-panel" id="admin-panel" hidden>
+        <div class="admin-heading">
+          <div>
+            <p class="eyebrow">SYSTEM ADMINISTRATION</p>
+            <h2>Manage your workspace</h2>
+            <p class="admin-description">Manage staff access, group permissions, and the fields on every receipt.</p>
+          </div>
+        </div>
+        <nav class="admin-tabs" aria-label="Administration sections">
+          <button class="admin-tab active" data-admin-tab="users" type="button">Users</button>
+          <button class="admin-tab" data-admin-tab="groups" type="button">User groups</button>
+          <button class="admin-tab" data-admin-tab="fields" type="button">Custom fields</button>
+        </nav>
+        <div class="admin-content">
+          <section class="admin-pane" id="admin-users-pane">
+            <div class="admin-section-heading"><div><h3>User accounts</h3><p>Create, edit, or deactivate staff accounts.</p></div></div>
+            <form class="admin-form user-form" id="user-form">
+              <input id="user-edit-id" type="hidden">
+              <div class="admin-form-grid">
+                <div><label for="user-display-name">Full name</label><input id="user-display-name" maxlength="80" required></div>
+                <div><label for="user-username">Username</label><input id="user-username" minlength="3" maxlength="40" autocomplete="off" required></div>
+                <div><label for="user-group">User group</label><select id="user-group" required></select></div>
+                <div><label for="user-password">Password</label><input id="user-password" type="password" minlength="10" maxlength="200" autocomplete="new-password" placeholder="At least 10 characters" required></div>
+              </div>
+              <div class="form-actions">
+                <button class="primary-button compact-button" type="submit" id="user-submit">Create user</button>
+                <button class="secondary-button" id="user-cancel" type="button" hidden>Cancel edit</button>
+              </div>
+              <p class="admin-message" id="user-message" role="status" aria-live="polite"></p>
+            </form>
+            <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Group</th><th>Status</th><th>Actions</th></tr></thead><tbody id="users-table-body"></tbody></table></div>
+          </section>
+          <section class="admin-pane" id="admin-groups-pane" hidden>
+            <div class="admin-section-heading"><div><h3>Permission groups</h3><p>Choose what members of each group can view or change.</p></div></div>
+            <div class="group-layout">
+              <div class="group-list" id="groups-list"></div>
+              <form class="admin-form group-form" id="group-form">
+                <input id="group-edit-id" type="hidden">
+                <label for="group-name">Group name</label><input id="group-name" maxlength="60" required>
+                <label for="group-description">Description</label><textarea id="group-description" rows="2" maxlength="240"></textarea>
+                <fieldset class="permission-fieldset"><legend>Permissions</legend><div class="permission-list" id="permission-list"></div></fieldset>
+                <div class="form-actions">
+                  <button class="primary-button compact-button" type="submit" id="group-submit">Create group</button>
+                  <button class="secondary-button" id="group-cancel" type="button" hidden>Cancel edit</button>
+                  <button class="danger-button" id="group-delete" type="button" hidden>Delete group</button>
+                </div>
+                <p class="admin-message" id="group-message" role="status" aria-live="polite"></p>
+              </form>
+            </div>
+          </section>
+          <section class="admin-pane" id="admin-fields-pane" hidden>
+            <div class="admin-section-heading"><div><h3>Receipt fields</h3><p>Add fields to receipt entry and the Excel export. Archived fields and their saved values remain in existing records and exports.</p></div></div>
+            <form class="admin-form field-form" id="field-form">
+              <input id="field-edit-id" type="hidden">
+              <div class="admin-form-grid">
+                <div><label for="field-label">Field label</label><input id="field-label" maxlength="60" placeholder="e.g. Department" required></div>
+                <div><label for="field-type">Input type</label><select id="field-type"><option value="text">Text</option><option value="number">Number</option><option value="date">Date</option><option value="select">Dropdown</option></select></div>
+                <div class="field-options-wrap" id="field-options-wrap" hidden><label for="field-options">Dropdown options (one per line)</label><textarea id="field-options" rows="3" placeholder="Operations&#10;Finance"></textarea></div>
+              </div>
+              <label class="check-label"><input id="field-required" type="checkbox"> Require this field for new receipts</label>
+              <div class="form-actions">
+                <button class="primary-button compact-button" type="submit" id="field-submit">Add field</button>
+                <button class="secondary-button" id="field-cancel" type="button" hidden>Cancel edit</button>
+              </div>
+              <p class="admin-message" id="field-message" role="status" aria-live="polite"></p>
+            </form>
+            <div class="table-scroll"><table><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Status</th><th>Actions</th></tr></thead><tbody id="fields-table-body"></tbody></table></div>
+          </section>
+        </div>
+      </section>
+      <footer class="page-footer">
+        <span>Shared receipt register</span>
+        <span class="footer-dot"></span>
+        <span>Secure accounting export</span>
+      </footer>
+    </main>
+
+    <div class="login-screen" id="login-screen">
+      <section class="login-card" aria-labelledby="login-title">
+        <div class="brand login-brand"><span class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M7 3.75h10a1.25 1.25 0 0 1 1.25 1.25v15L15.5 18l-3.5 2-3.5-2-2.75 2V5A1.25 1.25 0 0 1 7 3.75Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 8h6M9 11.5h6M9 15h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span><span>Receipt<span class="brand-light">Recorder</span></span></div>
+        <p class="eyebrow">STAFF ACCESS</p>
+        <h1 id="login-title">Sign in to your workspace</h1>
+        <p class="login-copy">Enter the username and password provided by your system administrator.</p>
+        <form id="login-form">
+          <label for="login-username">Username</label>
+          <input id="login-username" name="username" autocomplete="username" required autofocus>
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          <button class="primary-button" id="login-button" type="submit">Sign in</button>
+          <p class="login-message" id="login-message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </div>
+  </body>
+</html>

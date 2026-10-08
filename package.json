@@ -1,0 +1,27 @@
+{
+  "name": "receipt-recorder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A mobile-friendly shared receipt register with role-based access, custom fields, and filtered Excel export.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test",
+    "migrate:supabase": "node scripts/migrate-supabase.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
+    "better-sqlite3": "^12.2.0",
+    "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.0.1",
+    "helmet": "^8.1.0",
+    "pg": "^8.16.3"
+  }
+}
