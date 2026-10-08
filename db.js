@@ -49,6 +49,10 @@ const sqliteSchema = `
   );
   CREATE INDEX IF NOT EXISTS receipts_date_idx ON receipts(receipt_date DESC, id DESC);
   CREATE INDEX IF NOT EXISTS receipts_created_by_idx ON receipts(created_by, receipt_date DESC);
+  CREATE TABLE IF NOT EXISTS onedrive_auth (
+    id INTEGER PRIMARY KEY CHECK (id = 1), access_token TEXT NOT NULL, refresh_token TEXT NOT NULL,
+    expires_at BIGINT NOT NULL, account_email TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `;
 
 function translatePostgresQuery(sql, parameters) {
@@ -153,6 +157,8 @@ class ReceiptDatabase {
       await this.pool.query(
         "ALTER TABLE public.users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0"
       );
+      await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS image_url TEXT");
+      await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS onedrive_file_id TEXT");
     } else {
       this.database.exec(sqliteSchema);
       const existingColumns = this.database.pragma("table_info(receipts)");
@@ -169,7 +175,7 @@ class ReceiptDatabase {
         ["created_by_name", "TEXT"],
         ["updated_at", "TEXT"]
       ];
-      for (const [name, declaration] of migrations) {
+      for (const [name, declaration] of [...migrations, ["image_url", "TEXT"], ["onedrive_file_id", "TEXT"]]) {
         if (!existingColumns.some((column) => column.name === name)) {
           this.database.exec(`ALTER TABLE receipts ADD COLUMN ${name} ${declaration}`);
         }
