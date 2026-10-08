@@ -592,7 +592,7 @@ app.get("/api/onedrive/connect", requirePermission("users:manage"), (request, re
   response.setHeader("Set-Cookie", [`onedrive_oauth_state=${state}; Max-Age=600; Path=/; HttpOnly; SameSite=Lax${isProduction ? "; Secure" : ""}`]);
   response.redirect(url.toString());
 });
-app.get("/api/onedrive/callback", requirePermission("users:manage"), async (request, response) => {
+app.get("/api/onedrive/callback", async (request, response) => {
   const state = typeof request.query.state === "string" ? request.query.state : "";
   const savedState = request.cookies?.onedrive_oauth_state || "";
   const code = typeof request.query.code === "string" ? request.query.code : "";
@@ -782,7 +782,7 @@ app.get("/api/receipts/:id/image", requireAuth, async (request, response) => {
   if (!Number.isSafeInteger(id) || id <= 0) return response.status(400).json({error:"Select a valid receipt."});
   const receipt = await database.prepare("SELECT id, created_by, onedrive_file_id FROM receipts WHERE id = ?").get(id);
   if (!receipt?.onedrive_file_id) return response.status(404).json({error:"No image is attached to this receipt."});
-  if (!userCan("receipts:read_own", receipt, request.user) && !userHas("receipts:read_all", request.user)) {
+  if (!userCan("receipts:read_own", receipt, request.user)) {
     return response.status(403).json({error:"Your user group cannot view this receipt image."});
   }
   try {
