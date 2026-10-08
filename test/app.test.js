@@ -16,7 +16,7 @@ process.env.SUPABASE_URL = "https://receipt-recorder-test.supabase.co";
 
 const { after, before, test } = require("node:test");
 const server = require("../app-server");
-assert.equal(require("../api/[...path]"), server);
+assert.equal(require("../server"), server);
 const dataDirectory = process.env.DATA_DIR;
 let baseUrl;
 let adminCookie;
