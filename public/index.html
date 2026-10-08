@@ -44,6 +44,8 @@
             <div>
               <p class="eyebrow" id="receipt-form-eyebrow">NEW ENTRY</p>
               <h2 id="receipt-form-heading">Record a receipt</h2>
+              <p id="onedrive-status" class="receipt-owner" aria-live="polite">Receipt images can be saved to OneDrive.</p>
+              <button class="text-button" id="onedrive-connect-button" type="button" hidden>Connect OneDrive</button>
             </div>
             <span class="heading-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -64,6 +66,9 @@
               <span aria-hidden="true">₱</span>
               <input id="amount" name="amount" type="number" min="0.01" max="1000000000" step="0.01" inputmode="decimal" placeholder="0.00" required>
             </div>
+            <label for="receipt-image">Receipt image (optional)</label>
+            <input id="receipt-image" name="receiptImage" type="file" accept="image/*" capture="environment">
+            <p class="receipt-owner">On phones, this can open your camera. JPG, PNG, WebP, or GIF; maximum 8 MB.</p>
             <div id="custom-inputs"></div>
             <button class="primary-button" id="save-button" type="submit">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
