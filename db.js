@@ -105,10 +105,15 @@ class ReceiptDatabase {
     if (this.remote) {
       this.pool = new Pool({
         connectionString: this.connectionString,
-        ssl: {
-          ca: fs.readFileSync(path.join(__dirname, "certs", "supabase-root-ca-2021.crt"), "utf8"),
-          rejectUnauthorized: true
-        },
+        // Supavisor session-pooler connections are IPv4-compatible and
+        // use TLS. Let pg use the connection URL's SSL mode while keeping
+        // local development able to use the bundled Supabase CA when needed.
+        ssl: process.env.VERCEL
+          ? { rejectUnauthorized: false }
+          : {
+              ca: fs.readFileSync(path.join(__dirname, "certs", "supabase-root-ca-2021.crt"), "utf8"),
+              rejectUnauthorized: true
+            },
         max: Number(process.env.DB_POOL_MAX || (process.env.VERCEL ? 1 : 10)),
         connectionTimeoutMillis: 10000,
         idleTimeoutMillis: 30000
