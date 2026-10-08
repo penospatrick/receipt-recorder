@@ -21,7 +21,7 @@ When `SUPABASE_DB_URL` or `DATABASE_URL` is set to a PostgreSQL URI, the server 
 
 ## Deploy to Vercel
 
-This project can run on Vercel as an Express application backed by Supabase. Import the GitHub repository as a new Vercel project and use the repository root; Vercel detects the root `server.js` Express entry point. The `vercel.json` configuration explicitly includes the database schema and Supabase root CA in that function. No build command, output directory, or catch-all rewrite is required. Vercel serves files in `public/` from its CDN, and the Express function handles API requests.
+This project deploys to Vercel as static files plus a dedicated catch-all Node.js function for `/api/*`. The Vercel function exports the Express API app from `app-server.js`; that file is deliberately not named `server.js` so Vercel does not auto-detect it as a long-running Express server. `vercel.json` includes the Supabase schema and root CA in the function. No rewrites or build command are required. Vercel serves files in `public/` from its CDN and sends API requests to the function.
 
 Add these environment variables in **Project Settings → Environment Variables**:
 

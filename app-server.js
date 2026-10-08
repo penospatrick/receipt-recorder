@@ -9,6 +9,7 @@ const helmet = require("helmet");
 let ReceiptDatabase;
 
 const app = express();
+// Vercel's API function imports this app; local development uses start().
 const port = Number(process.env.PORT || 3000);
 const bootstrapPassword = process.env.ACCOUNTING_PASSWORD;
 const sessionSecret = process.env.SESSION_SECRET;

@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "A mobile-friendly shared receipt register with role-based access, custom fields, and filtered Excel export.",
-  "main": "server.js",
+  "main": "app-server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node app-server.js",
+    "dev": "node --watch app-server.js",
     "test": "node --test",
     "migrate:supabase": "node scripts/migrate-supabase.js"
   },
