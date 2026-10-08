@@ -329,7 +329,8 @@ function getFilters(request, fields, response) {
 async function getReceiptRows(filters) {
   const where = filters.clauses.length ? `WHERE ${filters.clauses.join(" AND ")}` : "";
   return database.prepare(`
-    SELECT r.id, r.receipt_date, r.si_or_number, r.particulars, r.amount_cents,
+    SELECT r.id, CAST(r.receipt_date AS TEXT) AS receipt_date,
+      r.si_or_number, r.particulars, r.amount_cents,
       r.custom_values, r.created_by, r.created_at,
       COALESCE(u.display_name, r.created_by_name) AS creator_name
     FROM receipts r

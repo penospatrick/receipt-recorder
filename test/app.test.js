@@ -212,7 +212,10 @@ test("custom field filters produce an Excel file with the matching records and c
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(Buffer.from(await exported.arrayBuffer()));
   const sheet = workbook.getWorksheet("Receipts");
+  const exportedDate = sheet.getRow(2).getCell(1).value;
   assert.equal(sheet.getRow(1).getCell(6).value, "Department");
+  assert.ok(exportedDate instanceof Date);
+  assert.equal(exportedDate.toISOString().slice(0, 10), "2026-10-07");
   assert.equal(sheet.getRow(2).getCell(2).value, "FIELD-001");
   assert.equal(sheet.getRow(2).getCell(6).value, "Finance");
   assert.equal(sheet.getRow(4).getCell(4).value.formula, "SUM(D2:D2)");
