@@ -267,3 +267,7 @@ td { padding: 10px; border-bottom: 1px solid #edf1ee; color: #38534a; }
   .field-options-wrap { grid-column: auto; }
   .group-list { grid-template-columns: 1fr; }
 }
+
+
+.receipt-image-thumbnail{display:block;max-width:100%;max-height:220px;margin-top:12px;border:1px solid #dce2e8;border-radius:10px;object-fit:contain;background:#f7f8fa}
+#receipt-image{display:block;max-width:100%;margin:8px 0}
