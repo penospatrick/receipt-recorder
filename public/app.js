@@ -13,6 +13,9 @@ const totalOutput = document.querySelector("#receipt-total");
 const exportPanel = document.querySelector("#export-panel");
 const exportMessage = document.querySelector("#export-message");
 const adminPanel = document.querySelector("#admin-panel");
+const receiptImageInput = document.querySelector("#receipt-image");
+const oneDriveStatus = document.querySelector("#onedrive-status");
+const oneDriveConnectButton = document.querySelector("#onedrive-connect-button");
 
 const pesoFormatter = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 const dateFormatter = new Intl.DateTimeFormat("en-PH", {
@@ -78,12 +81,25 @@ function setAuthenticated(user) {
   document.querySelector(".entry-card").hidden = !userHas("receipts:create");
   exportPanel.hidden = !userHas("receipts:export");
   showAdminPanes();
+  oneDriveConnectButton.hidden = !userHas("users:manage");
+  if (user) loadOneDriveStatus();
+  else oneDriveStatus.textContent = "Receipt images can be saved to OneDrive.";
   if (!user) {
     receiptList.replaceChildren();
     countOutput.textContent = "—";
     totalOutput.textContent = "—";
   }
 }
+
+async function loadOneDriveStatus() {
+  if (!appState.user) return;
+  try {
+    const status = await api("/api/onedrive/status");
+    oneDriveStatus.textContent = status.connected ? `OneDrive connected: ${status.accountEmail}` : "OneDrive is not connected yet.";
+    oneDriveConnectButton.textContent = status.connected ? "Reconnect OneDrive" : "Connect OneDrive";
+  } catch (_error) { oneDriveStatus.textContent = "OneDrive connection status unavailable."; }
+}
+oneDriveConnectButton.addEventListener("click", () => { window.location.href = "/api/onedrive/connect"; });
 
 function makeElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -191,6 +207,13 @@ function renderReceipts(receipts) {
     }
     detail.append(actions);
     item.append(main, detail);
+    if (receipt.hasImage) {
+      const image = makeElement("img", "receipt-image-thumbnail");
+      image.src = `/api/receipts/${receipt.id}/image`;
+      image.alt = `Receipt image for ${receipt.siOrNumber}`;
+      image.loading = "lazy";
+      item.append(image);
+    }
     if (Object.keys(receipt.customValues || {}).length) {
       const custom = makeElement("div", "receipt-custom-preview");
       for (const field of appState.fields) {
@@ -242,6 +265,8 @@ function setReceiptEditing(receipt = null) {
   document.querySelector("#receipt-form-heading").textContent = receipt ? "Edit receipt" : "Record a receipt";
   document.querySelector("#receipt-form-eyebrow").textContent = receipt ? "UPDATE ENTRY" : "NEW ENTRY";
   document.querySelector("#receipt-cancel-edit").hidden = !receipt;
+  receiptImageInput.disabled = Boolean(receipt);
+  if (receipt) receiptImageInput.value = "";
 }
 
 function editReceipt(receipt) {
@@ -273,10 +298,23 @@ receiptForm.addEventListener("submit", async (event) => {
   button.textContent = editingId ? "Updating receipt…" : "Saving receipt…";
   showMessage(formMessage, "");
   try {
+    const payload = collectReceiptPayload();
+    if (!editingId && receiptImageInput.files?.[0]) {
+      const file = receiptImageInput.files[0];
+      if (file.size > 8 * 1024 * 1024) throw new Error("Receipt images must be smaller than 8 MB.");
+      if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) throw new Error("Choose a JPG, PNG, WebP, or GIF image.");
+      payload.imageData = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("Could not read the selected image."));
+        reader.readAsDataURL(file);
+      });
+      payload.imageName = file.name;
+    }
     await api(editingId ? `/api/receipts/${editingId}` : "/api/receipts", {
       method: editingId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(collectReceiptPayload())
+      body: JSON.stringify(payload)
     });
     receiptForm.reset();
     dateInput.value = localDateString();
