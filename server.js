@@ -451,7 +451,9 @@ function healthDetails() {
   };
 }
 
-app.get("/api/health", async (_request, response) => {
+app.get("/api/health", (_request, response) => response.status(startupError ? 503 : 200).json(healthDetails()));
+
+app.get("/api/health/db", async (_request, response) => {
   if (startupError) return response.status(503).json(healthDetails());
   try {
     await ensureStorageInitialized();
