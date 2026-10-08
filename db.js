@@ -118,12 +118,15 @@ class ReceiptDatabase {
       });
       this.database = this.pool;
     } else {
-      // SQLite is only used for local development. Lazy-load the native module so
-      // Vercel production deployments using PostgreSQL do not load better-sqlite3.
-      const Database = require("better-sqlite3");
+      // Never load the native SQLite driver inside a Vercel Function. If the
+      // PostgreSQL URL is missing, fail with a useful configuration error
+      // instead of a native-module invocation failure.
       if (process.env.VERCEL) {
-        throw new Error("Set SUPABASE_DB_URL or DATABASE_URL to a PostgreSQL connection string when deploying to Vercel.");
+        throw new Error(
+          "Vercel database configuration is missing. Set SUPABASE_DB_URL or DATABASE_URL to a PostgreSQL connection string."
+        );
       }
+      const Database = require("better-sqlite3");
       const dataDirectory = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
       fs.mkdirSync(dataDirectory, { recursive: true });
       this.sqlitePath = path.join(dataDirectory, "receipts.sqlite");
