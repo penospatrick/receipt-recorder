@@ -2,6 +2,8 @@ const body = document.body;
 const loginScreen = document.querySelector("#login-screen");
 const loginForm = document.querySelector("#login-form");
 const loginMessage = document.querySelector("#login-message");
+const passwordChangeForm = document.querySelector("#password-change-form");
+const passwordChangeMessage = document.querySelector("#password-change-message");
 const receiptForm = document.querySelector("#receipt-form");
 const dateInput = document.querySelector("#receipt-date");
 const formMessage = document.querySelector("#form-message");
@@ -309,6 +311,14 @@ loginForm.addEventListener("submit", async (event) => {
       })
     });
     loginForm.reset();
+    if (user.mustChangePassword) {
+      loginForm.hidden = true;
+      passwordChangeForm.hidden = false;
+      document.querySelector("#login-title").textContent = "Create your new password";
+      document.querySelector(".login-copy").textContent = "Your administrator gave you a temporary password. Set a new password to continue.";
+      document.querySelector("#first-password").focus();
+      return;
+    }
     await openWorkspace(user);
   } catch (error) {
     showMessage(loginMessage, error.message, true);
@@ -412,6 +422,13 @@ async function openWorkspace(user) {
 async function restoreSession() {
   try {
     const { user } = await api("/api/auth/me");
+    if (user.mustChangePassword) {
+      loginForm.hidden = true;
+      passwordChangeForm.hidden = false;
+      document.querySelector("#login-title").textContent = "Create your new password";
+      document.querySelector(".login-copy").textContent = "Your administrator gave you a temporary password. Set a new password to continue.";
+      return;
+    }
     await openWorkspace(user);
   } catch (error) {
     if (error.message !== "Sign in to continue.") showMessage(loginMessage, error.message, true);
@@ -668,6 +685,51 @@ function resetUserForm() {
   showMessage(document.querySelector("#user-message"), "");
 }
 
+passwordChangeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const password = passwordChangeForm.elements.password.value;
+  const confirmation = passwordChangeForm.elements.confirmPassword.value;
+  if (password !== confirmation) {
+    showMessage(passwordChangeMessage, "The passwords do not match.", true);
+    return;
+  }
+  const button = document.querySelector("#first-password-submit");
+  button.disabled = true;
+  showMessage(passwordChangeMessage, "");
+  try {
+    const { user } = await api("/api/auth/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    passwordChangeForm.reset();
+    passwordChangeForm.hidden = true;
+    loginForm.hidden = false;
+    document.querySelector("#login-title").textContent = "Sign in to your workspace";
+    document.querySelector(".login-copy").textContent = "Enter the username and password provided by your system administrator.";
+    await openWorkspace(user);
+  } catch (error) {
+    showMessage(passwordChangeMessage, error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector("#first-password-signout").addEventListener("click", async () => {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+    passwordChangeForm.reset();
+    passwordChangeForm.hidden = true;
+    loginForm.hidden = false;
+    document.querySelector("#login-title").textContent = "Sign in to your workspace";
+    document.querySelector(".login-copy").textContent = "Enter the username and password provided by your system administrator.";
+    loginForm.elements.username.focus();
+    showMessage(passwordChangeMessage, "");
+  } catch (error) {
+    showMessage(passwordChangeMessage, error.message, true);
+  }
+});
+
 document.querySelector("#user-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const editingId = appState.editingUserId;
@@ -692,6 +754,71 @@ document.querySelector("#user-form").addEventListener("submit", async (event) =>
   }
 });
 document.querySelector("#user-cancel").addEventListener("click", resetUserForm);
+
+document.querySelector("#user-template-download").addEventListener("click", async () => {
+  const button = document.querySelector("#user-template-download");
+  button.disabled = true;
+  showMessage(document.querySelector("#bulk-user-message"), "");
+  try {
+    const response = await fetch("/api/admin/users/template.xlsx");
+    if (!response.ok) throw new Error((await response.json()).error || "Could not download the template.");
+    const url = URL.createObjectURL(await response.blob());
+    const link = makeElement("a");
+    link.href = url;
+    link.download = "user-upload-template.xlsx";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    showMessage(document.querySelector("#bulk-user-message"), error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.querySelector("#bulk-user-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const fileInput = document.querySelector("#bulk-user-file");
+  const file = fileInput.files[0];
+  if (!file) return;
+  const button = document.querySelector("#bulk-user-submit");
+  const message = document.querySelector("#bulk-user-message");
+  const resultsTable = document.querySelector("#bulk-user-results");
+  button.disabled = true;
+  resultsTable.hidden = true;
+  resultsTable.querySelector("tbody").replaceChildren();
+  showMessage(message, "Uploading and validating users…");
+  try {
+    const response = await fetch("/api/admin/users/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      body: file
+    });
+    const result = await readJson(response);
+    showMessage(message, `Created ${result.created} user(s); skipped ${result.skipped} row(s). Temporary passwords are not retained.`);
+    const tbody = resultsTable.querySelector("tbody");
+    for (const row of result.results) {
+      const tr = makeElement("tr");
+      for (const value of [row.row, row.username, row.status, row.message]) {
+        tr.append(makeElement("td", "", String(value)));
+      }
+      tbody.append(tr);
+    }
+    resultsTable.hidden = false;
+    fileInput.value = "";
+    await loadUsers();
+    if (userHas("receipts:read_all") && userHas("receipts:export")) {
+      const usersResponse = await api("/api/users/directory");
+      appState.users = usersResponse.users;
+      renderExportFilters();
+    }
+  } catch (error) {
+    showMessage(message, error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 async function toggleUser(user) {
   if (user.active && !window.confirm(`Disable ${user.displayName}'s account? They will be signed out.`)) return;

@@ -79,7 +79,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 function findUserById(userId) {
   return database.prepare(`
     SELECT u.id, u.username, u.display_name, u.group_id, u.active,
-      g.name AS group_name, g.permissions_json
+      u.must_change_password, g.name AS group_name, g.permissions_json
     FROM users u JOIN groups g ON g.id = u.group_id
     WHERE u.id = ?
   `).get(userId);
@@ -116,6 +116,7 @@ function safeUser(row) {
     groupId: row.group_id,
     groupName: row.group_name,
     active: Boolean(row.active),
+    mustChangePassword: Boolean(row.must_change_password),
     permissions: JSON.parse(row.permissions_json)
   };
 }
@@ -530,6 +531,37 @@ app.post("/api/auth/logout", (_request, response) => {
   response.json({ authenticated: false });
 });
 
+app.post("/api/auth/change-password", requireAuth, async (request, response) => {
+  if (!request.user.mustChangePassword) {
+    return response.status(400).json({ error: "This account does not need a first-sign-in password change." });
+  }
+  const password = typeof request.body?.password === "string" ? request.body.password : "";
+  if (password.length < 10 || password.length > 200) {
+    return response.status(400).json({ error: "New passwords must be at least 10 characters and no more than 200 characters." });
+  }
+  const current = await database.prepare("SELECT password_salt, password_hash FROM users WHERE id = ?").get(request.user.id);
+  const candidateHash = crypto.scryptSync(password, current.password_salt, 64);
+  const currentHash = Buffer.from(current.password_hash, "hex");
+  if (candidateHash.length === currentHash.length && crypto.timingSafeEqual(candidateHash, currentHash)) {
+    return response.status(400).json({ error: "Choose a password different from your temporary password." });
+  }
+  const credentials = hashPassword(password);
+  await database.prepare(`
+    UPDATE users
+    SET password_salt = ?, password_hash = ?, must_change_password = 0
+    WHERE id = ?
+  `).run(credentials.salt, credentials.hash, request.user.id);
+  response.json({ user: safeUser(await findUserById(request.user.id)) });
+});
+
+app.use("/api", (request, response, next) => {
+  if (request.user?.mustChangePassword &&
+      !["/auth/me", "/auth/logout", "/auth/change-password"].includes(request.path)) {
+    return response.status(403).json({ error: "Change your temporary password before using the workspace." });
+  }
+  next();
+});
+
 app.get("/api/groups", requireAuth, async (_request, response) => {
   const groups = (await database.prepare(`
     SELECT g.id, g.name, g.description, g.permissions_json, g.is_system,
@@ -709,6 +741,155 @@ app.post("/api/admin/users", requirePermission("users:manage"), async (request, 
     throw error;
   }
 });
+
+const bulkUserHeaders = ["username", "full name", "user group", "temporary password"];
+const bulkUserLimit = 200;
+
+app.get("/api/admin/users/template.xlsx", requirePermission("users:manage"), async (_request, response, next) => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Users");
+    sheet.columns = [
+      { header: "Username", key: "username", width: 24 },
+      { header: "Full Name", key: "fullName", width: 32 },
+      { header: "User Group", key: "userGroup", width: 24 },
+      { header: "Temporary Password", key: "temporaryPassword", width: 28 }
+    ];
+    sheet.getRow(1).font = { bold: true };
+    const instructions = workbook.addWorksheet("Instructions");
+    instructions.addRows([
+      ["Bulk user upload"],
+      ["Fill in one user per row on the Users sheet. Keep the column headers unchanged."],
+      ["User Group must exactly match an existing group, such as Field Officer."],
+      ["Temporary Password must be 10–200 characters. Each user must change it at first sign-in."],
+      [`Upload a maximum of ${bulkUserLimit} users per file. Invalid rows are skipped and reported.`]
+    ]);
+    const buffer = await workbook.xlsx.writeBuffer();
+    response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    response.setHeader("Content-Disposition", 'attachment; filename="user-upload-template.xlsx"');
+    response.send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post(
+  "/api/admin/users/bulk",
+  requirePermission("users:manage"),
+  express.raw({
+    type: [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/octet-stream"
+    ],
+    limit: "2mb"
+  }),
+  async (request, response) => {
+    if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+      return response.status(400).json({ error: "Choose a non-empty .xlsx file to upload." });
+    }
+
+    let workbook;
+    try {
+      workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(request.body);
+    } catch {
+      return response.status(400).json({ error: "The uploaded file is not a readable Excel .xlsx workbook." });
+    }
+
+    const sheet = workbook.getWorksheet("Users") || workbook.worksheets[0];
+    if (!sheet) return response.status(400).json({ error: "The workbook must contain a Users worksheet." });
+    const headers = sheet.getRow(1).values.slice(1).map((value) =>
+      typeof value === "string" ? value.trim().toLowerCase() : ""
+    );
+    if (!bulkUserHeaders.every((header) => headers.includes(header))) {
+      return response.status(400).json({
+        error: "The Users worksheet must include Username, Full Name, User Group, and Temporary Password columns."
+      });
+    }
+    const headerIndexes = Object.fromEntries(bulkUserHeaders.map((header) => [
+      header,
+      headers.indexOf(header) + 1
+    ]));
+    const rows = [];
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber > 1 && row.values.some((value) => value !== null && value !== undefined && value !== "")) {
+        rows.push({ rowNumber, row });
+      }
+    });
+    if (rows.length > bulkUserLimit) {
+      return response.status(400).json({ error: `Upload no more than ${bulkUserLimit} user rows per file.` });
+    }
+    if (!rows.length) return response.status(400).json({ error: "The Users worksheet contains no user rows." });
+
+    const groups = await database.prepare('SELECT id, name FROM groups').all();
+    const groupsByName = new Map(groups.map((group) => [group.name.trim().toLowerCase(), group]));
+    const existingUsers = await database.prepare("SELECT username FROM users").all();
+    const usedUsernames = new Set(existingUsers.map((user) => user.username.toLowerCase()));
+    const results = [];
+
+    const cellText = (cell, trim = true) => {
+      const value = cell.value;
+      if (typeof value === "string") return trim ? value.trim() : value;
+      if (typeof value === "number") return String(value);
+      if (value && typeof value === "object" && Array.isArray(value.richText)) {
+        const text = value.richText.map((part) => part.text).join("");
+        return trim ? text.trim() : text;
+      }
+      return "";
+    };
+
+    for (const { rowNumber, row } of rows) {
+      const username = cellText(row.getCell(headerIndexes["username"]));
+      const displayName = cellText(row.getCell(headerIndexes["full name"]));
+      const groupName = cellText(row.getCell(headerIndexes["user group"]));
+      const temporaryPassword = cellText(row.getCell(headerIndexes["temporary password"]), false);
+      let error = "";
+      const group = groupsByName.get(groupName.toLowerCase());
+
+      if (!/^[A-Za-z0-9._-]{3,40}$/.test(username)) {
+        error = "Username must be 3–40 letters, numbers, dots, dashes, or underscores.";
+      } else if (usedUsernames.has(username.toLowerCase())) {
+        error = "Username is already in use or duplicated in this file.";
+      } else if (!displayName || displayName.length > 80) {
+        error = "Full Name must be 1–80 characters.";
+      } else if (!group) {
+        error = "User Group must match an existing group name.";
+      } else if (temporaryPassword.length < 10 || temporaryPassword.length > 200) {
+        error = "Temporary Password must be 10–200 characters.";
+      }
+
+      if (!error) {
+        const credentials = hashPassword(temporaryPassword);
+        try {
+          await database.prepare(`
+            INSERT INTO users (
+              username, display_name, password_salt, password_hash, group_id, must_change_password
+            ) VALUES (?, ?, ?, ?, ?, 1)
+          `).run(username, displayName, credentials.salt, credentials.hash, group.id);
+          usedUsernames.add(username.toLowerCase());
+        } catch (insertError) {
+          if (insertError.code === "SQLITE_CONSTRAINT_UNIQUE" || insertError.code === "23505") {
+            error = "Username is already in use or duplicated in this file.";
+          } else {
+            throw insertError;
+          }
+        }
+      }
+      results.push({
+        row: rowNumber,
+        username,
+        status: error ? "skipped" : "created",
+        message: error || "Created; user must change the temporary password at first sign-in."
+      });
+    }
+
+    response.json({
+      created: results.filter((result) => result.status === "created").length,
+      skipped: results.filter((result) => result.status === "skipped").length,
+      results
+    });
+  }
+);
 
 app.put("/api/admin/users/:id", requirePermission("users:manage"), async (request, response) => {
   const userId = Number(request.params.id);

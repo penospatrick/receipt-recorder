@@ -270,3 +270,83 @@ test("deleting a user revokes the account and preserves receipt attribution", as
   const savedReceipt = receipt.receipts.find((entry) => entry.id === bobReceiptId);
   assert.equal(savedReceipt.creatorName, "Bob Officer");
 });
+
+test("bulk user template and partial import enforce a first-sign-in password change", async () => {
+  const unauthenticatedTemplate = await fetch(`${baseUrl}/api/admin/users/template.xlsx`);
+  assert.equal(unauthenticatedTemplate.status, 401);
+
+  const templateResponse = await fetch(`${baseUrl}/api/admin/users/template.xlsx`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(templateResponse.status, 200);
+  assert.match(templateResponse.headers.get("content-disposition"), /user-upload-template\.xlsx/);
+  const templateWorkbook = new ExcelJS.Workbook();
+  await templateWorkbook.xlsx.load(Buffer.from(await templateResponse.arrayBuffer()));
+  assert.deepEqual(templateWorkbook.getWorksheet("Users").getRow(1).values.slice(1), [
+    "Username", "Full Name", "User Group", "Temporary Password"
+  ]);
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Users");
+  sheet.addRow(["Username", "Full Name", "User Group", "Temporary Password"]);
+  sheet.addRow(["bulkstaff", "Bulk Staff", "Field Officer", "Temporary-password-01"]);
+  sheet.addRow(["bulkstaff", "Duplicate Staff", "Field Officer", "Temporary-password-02"]);
+  sheet.addRow(["badgroup", "Unknown Group", "Nonexistent Group", "Temporary-password-03"]);
+  sheet.addRow(["bad name", "Invalid Username", "Field Officer", "Temporary-password-04"]);
+  const upload = await fetch(`${baseUrl}/api/admin/users/bulk`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      cookie: adminCookie
+    },
+    body: Buffer.from(await workbook.xlsx.writeBuffer())
+  });
+  assert.equal(upload.status, 200);
+  const importResult = await upload.json();
+  assert.equal(importResult.created, 1);
+  assert.equal(importResult.skipped, 3);
+  assert.deepEqual(importResult.results.map((result) => result.status), [
+    "created", "skipped", "skipped", "skipped"
+  ]);
+  assert.equal(importResult.results[0].row, 2);
+  assert.equal(importResult.results[0].username, "bulkstaff");
+  assert.ok(importResult.results[1].message.includes("already in use"));
+  assert.ok(importResult.results[2].message.includes("existing group"));
+
+  const importedLogin = await post("/api/auth/login", {
+    username: "bulkstaff",
+    password: "Temporary-password-01"
+  });
+  assert.equal(importedLogin.status, 200);
+  const importedSession = importedLogin.headers.get("set-cookie").split(";")[0];
+  const { user } = await json(await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { cookie: importedSession }
+  }));
+  assert.equal(user.mustChangePassword, true);
+
+  const blocked = await fetch(`${baseUrl}/api/receipts`, { headers: { cookie: importedSession } });
+  assert.equal(blocked.status, 403);
+
+  const rejectedPasswordChange = await post("/api/auth/change-password", {
+    password: "Temporary-password-01"
+  }, importedSession);
+  assert.equal(rejectedPasswordChange.status, 400);
+  const passwordChange = await post("/api/auth/change-password", {
+    password: "Permanent-password-01"
+  }, importedSession);
+  assert.equal(passwordChange.status, 200);
+  assert.equal((await passwordChange.json()).user.mustChangePassword, false);
+  const allowed = await fetch(`${baseUrl}/api/receipts`, { headers: { cookie: importedSession } });
+  assert.equal(allowed.status, 200);
+
+  const oldPassword = await post("/api/auth/login", {
+    username: "bulkstaff",
+    password: "Temporary-password-01"
+  });
+  assert.equal(oldPassword.status, 401);
+  const newPassword = await post("/api/auth/login", {
+    username: "bulkstaff",
+    password: "Permanent-password-01"
+  });
+  assert.equal(newPassword.status, 200);
+});

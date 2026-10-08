@@ -20,6 +20,7 @@ const sqliteSchema = `
     password_salt TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     group_id INTEGER NOT NULL REFERENCES groups(id),
+    must_change_password INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -145,9 +146,16 @@ class ReceiptDatabase {
     if (this.remote) {
       const schema = fs.readFileSync(path.join(__dirname, "supabase-schema.sql"), "utf8");
       await this.pool.query(schema);
+      await this.pool.query(
+        "ALTER TABLE public.users ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 0"
+      );
     } else {
       this.database.exec(sqliteSchema);
       const existingColumns = this.database.pragma("table_info(receipts)");
+      const existingUserColumns = this.database.pragma("table_info(users)");
+      if (!existingUserColumns.some((column) => column.name === "must_change_password")) {
+        this.database.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0");
+      }
       const migrations = [
         ["custom_values", "TEXT NOT NULL DEFAULT '{}'"],
         ["created_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"],

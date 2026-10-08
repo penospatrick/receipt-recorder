@@ -153,6 +153,31 @@
               </div>
               <p class="admin-message" id="user-message" role="status" aria-live="polite"></p>
             </form>
+            <section class="bulk-user-upload" aria-labelledby="bulk-user-title">
+              <div class="admin-section-heading">
+                <div>
+                  <h3 id="bulk-user-title">Create users in bulk</h3>
+                  <p>Upload an Excel template. Each user will be asked to replace their temporary password on first sign-in. Invalid rows are skipped and listed below.</p>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button class="secondary-button" id="user-template-download" type="button">Download Excel template</button>
+              </div>
+              <form id="bulk-user-form" class="bulk-user-form">
+                <label for="bulk-user-file">Excel workbook (.xlsx; up to 200 users)</label>
+                <input id="bulk-user-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+                <div class="form-actions">
+                  <button class="primary-button compact-button" type="submit" id="bulk-user-submit">Upload and create users</button>
+                </div>
+              </form>
+              <p class="admin-message" id="bulk-user-message" role="status" aria-live="polite"></p>
+              <div class="table-scroll" id="bulk-user-results" hidden>
+                <table>
+                  <thead><tr><th>Excel row</th><th>Username</th><th>Result</th><th>Details</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </section>
             <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Group</th><th>Status</th><th>Actions</th></tr></thead><tbody id="users-table-body"></tbody></table></div>
           </section>
           <section class="admin-pane" id="admin-groups-pane" hidden>
@@ -213,6 +238,15 @@
           <input id="login-password" name="password" type="password" autocomplete="current-password" required>
           <button class="primary-button" id="login-button" type="submit">Sign in</button>
           <p class="login-message" id="login-message" role="status" aria-live="polite"></p>
+        </form>
+        <form id="password-change-form" hidden>
+          <label for="first-password">New password</label>
+          <input id="first-password" name="password" type="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+          <label for="first-password-confirm">Confirm new password</label>
+          <input id="first-password-confirm" name="confirmPassword" type="password" minlength="10" maxlength="200" autocomplete="new-password" required>
+          <button class="primary-button" id="first-password-submit" type="submit">Set new password</button>
+          <button class="secondary-button" id="first-password-signout" type="button">Sign out</button>
+          <p class="login-message" id="password-change-message" role="status" aria-live="polite"></p>
         </form>
       </section>
     </div>

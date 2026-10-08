@@ -170,6 +170,8 @@ body:not(.authenticated) { overflow: hidden; }
 .login-copy { margin: 8px 0 24px; color: #75837e; font-size: 13px; line-height: 1.55; }
 .login-card form > label:not(:first-of-type) { margin-top: 15px; }
 .login-card .primary-button { margin-top: 21px; }
+.login-card form[hidden], .bulk-user-upload [hidden] { display: none; }
+.login-card .secondary-button { width: 100%; margin-top: 9px; }
 .login-message { min-height: 16px; margin: 11px 0 0; color: #a64c45; font-size: 12px; }
 #session-button-label { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard[hidden], .admin-panel[hidden], .export-panel[hidden], .field-options-wrap[hidden], .admin-pane[hidden] { display: none; }
@@ -208,6 +210,10 @@ body:not(.authenticated) { overflow: hidden; }
 .admin-form input:not([type=checkbox]), .admin-form select, .admin-form textarea { height: 38px; padding: 0 10px; font-size: 12px; }
 .admin-form textarea { min-height: 61px; height: auto; padding: 9px 10px; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 13px; }
+.bulk-user-upload { margin: 21px 0; padding: 17px; border: 1px solid #e8eeea; border-radius: 11px; background: #fafbfa; }
+.bulk-user-form { display: grid; gap: 7px; }
+.bulk-user-form label { color: #526860; font-size: 11px; font-weight: 600; }
+.bulk-user-form input[type=file] { width: 100%; min-width: 0; padding: 9px; border: 1px solid #dfe8e2; border-radius: 8px; background: #fff; font-size: 11px; }
 .compact-button { width: auto; min-height: 37px; margin: 0; padding: 0 15px; font-size: 11px; }
 .admin-message { min-height: 14px; margin: 8px 0 0; color: #39725b; font-size: 11px; }
 .admin-message.error { color: #a64c45; }
