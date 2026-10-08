@@ -61,7 +61,7 @@ function setAuthenticated(user) {
     : "Sign in";
   document.querySelector("#account-button").title = user
     ? `${user.displayName} · ${user.groupName} (click to sign out)`
-    : "Sign in to Receipt Recorder";
+    : "Sign in to Zurich Finance Corporation";
   document.querySelector(".dashboard").hidden = !user;
   const hasAdministration = user && ["users:manage", "groups:manage", "fields:manage"].some(userHas);
   adminPanel.hidden = !hasAdministration;

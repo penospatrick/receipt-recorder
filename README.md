@@ -1,4 +1,4 @@
-# Receipt Recorder
+# Zurich Finance Corporation Receipt Recorder
 
 A phone-friendly receipt register with individual staff sign-in, permission-managed user groups, administrator-managed accounts, configurable receipt fields, and filtered Excel exports.
 

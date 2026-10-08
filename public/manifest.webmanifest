@@ -1,6 +1,6 @@
 {
-  "name": "Receipt Recorder",
-  "short_name": "Receipts",
+  "name": "Zurich Finance Corporation",
+  "short_name": "Zurich Finance",
   "description": "Record receipts, manage access, and export filtered reports to Excel.",
   "start_url": "/",
   "display": "standalone",

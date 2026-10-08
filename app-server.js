@@ -900,7 +900,7 @@ app.get("/api/receipts/export.xlsx", requirePermission("receipts:export"), async
       SELECT id, label, active FROM receipt_fields ORDER BY sort_order, id
     `).all();
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "Receipt Recorder";
+    workbook.creator = "Zurich Finance Corporation";
     workbook.created = new Date();
     const sheet = workbook.addWorksheet("Receipts", {
       views: [{ state: "frozen", ySplit: 1 }]
