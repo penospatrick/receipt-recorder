@@ -59,3 +59,17 @@ Excel filters include a date range, amount bounds, user group, entering user, an
 ## Access
 
 The bootstrap admin account is created only on the first startup when its username does not yet exist. Changing `ACCOUNTING_PASSWORD` later does not reset an existing account; sign in as an administrator and edit the account to change its password. Sign-in sessions expire after eight hours. Set `NODE_ENV=production` when deployed over HTTPS so session cookies are marked secure. Protect the deployment with HTTPS and keep all passwords and the session secret private.
+
+
+## Optional OneDrive receipt images
+
+The app can save an optional receipt photo (the mobile picker may open the camera) to a central personal OneDrive. Receipt details and the OneDrive web URL/file ID are stored with each receipt.
+
+1. In Microsoft Entra, allow personal Microsoft accounts in the app registration.
+2. Add a **Web** redirect URI: `http://localhost:3000/api/onedrive/callback`. For production, register `https://YOUR_APP_HOST/api/onedrive/callback` and set `APP_URL=https://YOUR_APP_HOST`.
+3. Add Microsoft Graph **Delegated** permissions `User.Read` and `Files.ReadWrite`. The app requests `offline_access`.
+4. Set `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` as server environment variables only.
+5. Sign in as System Admin and click **Connect OneDrive**. The central refresh token is stored server-side in the app database.
+6. Staff with receipt-create permission can attach an image while creating a receipt. Images are limited to 8 MB and preview through an authenticated route; no anonymous public sharing link is created.
+
+Database initialization creates the OneDrive token table and adds image-reference columns to existing receipt tables automatically.
