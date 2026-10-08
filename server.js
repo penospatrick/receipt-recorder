@@ -6,7 +6,7 @@ const ExcelJS = require("exceljs");
 const express = require("express");
 const { rateLimit } = require("express-rate-limit");
 const helmet = require("helmet");
-const { ReceiptDatabase } = require("./db");
+let ReceiptDatabase;
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -37,6 +37,10 @@ try {
   if (!bootstrapPassword) throw new Error("ACCOUNTING_PASSWORD must be set to the initial admin password.");
   if (!sessionSecret || sessionSecret.length < 32) throw new Error("SESSION_SECRET must be set to a value at least 32 characters long.");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("PORT must be an integer between 0 and 65535.");
+  if (!/^[A-Za-z0-9._-]{3,40}$/.test(bootstrapUsername)) {
+    throw new Error("ADMIN_USERNAME must be 3-40 characters: letters, numbers, dots, dashes, or underscores.");
+  }
+  ({ ReceiptDatabase } = require("./db"));
   database = new ReceiptDatabase();
 } catch (error) {
   startupError = error;
@@ -70,10 +74,7 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   return { salt, hash };
 }
 
-const bootstrapUsername = (process.env.ADMIN_USERNAME || "admin").trim();
-if (!/^[A-Za-z0-9._-]{3,40}$/.test(bootstrapUsername)) {
-  throw new Error("ADMIN_USERNAME must be 3-40 characters: letters, numbers, dots, dashes, or underscores.");
-}
+let bootstrapUsername = (process.env.ADMIN_USERNAME || "admin").trim();
 
 function findUserById(userId) {
   return database.prepare(`
