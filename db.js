@@ -1,6 +1,5 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const Database = require("better-sqlite3");
 const { Pool, types } = require("pg");
 
 types.setTypeParser(20, (value) => Number(value));
@@ -119,6 +118,9 @@ class ReceiptDatabase {
       });
       this.database = this.pool;
     } else {
+      // SQLite is only used for local development. Lazy-load the native module so
+      // Vercel production deployments using PostgreSQL do not load better-sqlite3.
+      const Database = require("better-sqlite3");
       if (process.env.VERCEL) {
         throw new Error("Set SUPABASE_DB_URL or DATABASE_URL to a PostgreSQL connection string when deploying to Vercel.");
       }
