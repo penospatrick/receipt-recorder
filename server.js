@@ -29,18 +29,19 @@ const permissions = [
 ];
 const validPermissionKeys = new Set(permissions.map((permission) => permission.key));
 
-if (!bootstrapPassword) {
-  throw new Error("ACCOUNTING_PASSWORD must be set to the initial admin password.");
-}
-if (!sessionSecret || sessionSecret.length < 32) {
-  throw new Error("SESSION_SECRET must be set to a value at least 32 characters long.");
-}
-if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  throw new Error("PORT must be an integer between 0 and 65535.");
-}
-
-const database = new ReceiptDatabase();
+let database;
 let storageInitialization;
+let startupError = null;
+
+try {
+  if (!bootstrapPassword) throw new Error("ACCOUNTING_PASSWORD must be set to the initial admin password.");
+  if (!sessionSecret || sessionSecret.length < 32) throw new Error("SESSION_SECRET must be set to a value at least 32 characters long.");
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("PORT must be an integer between 0 and 65535.");
+  database = new ReceiptDatabase();
+} catch (error) {
+  startupError = error;
+  console.error("Receipt Recorder configuration failed:", error);
+}
 if (process.env.VERCEL) app.set("trust proxy", 1);
 
 const defaultGroups = [
@@ -119,9 +120,12 @@ function safeUser(row) {
 }
 
 function ensureStorageInitialized() {
+  if (startupError) return Promise.reject(startupError);
   if (!storageInitialization) {
     storageInitialization = initializeStorage().catch((error) => {
       storageInitialization = undefined;
+      startupError = error;
+      console.error("Receipt Recorder storage initialization failed:", error);
       throw error;
     });
   }
@@ -422,6 +426,39 @@ async function queryPermissionsForGroup(groupId) {
 }
 
 app.disable("x-powered-by");
+
+function healthDetails() {
+  return {
+    status: startupError ? "degraded" : "ok",
+    service: "receipt-recorder",
+    database: database
+      ? { configured: Boolean(database.remote), type: database.remote ? "postgresql" : "sqlite" }
+      : { configured: false, type: null },
+    environment: {
+      ACCOUNTING_PASSWORD: Boolean(process.env.ACCOUNTING_PASSWORD),
+      SESSION_SECRET: Boolean(process.env.SESSION_SECRET) && process.env.SESSION_SECRET.length >= 32,
+      SUPABASE_DB_URL: Boolean(process.env.SUPABASE_DB_URL || process.env.DATABASE_URL),
+      NODE_ENV: process.env.NODE_ENV || null,
+      VERCEL: Boolean(process.env.VERCEL)
+    },
+    error: startupError ? {
+      name: startupError.name,
+      message: startupError.message,
+      code: startupError.code || null
+    } : null
+  };
+}
+
+app.get("/api/health", async (_request, response) => {
+  if (startupError) return response.status(503).json(healthDetails());
+  try {
+    await ensureStorageInitialized();
+    return response.json(healthDetails());
+  } catch (_error) {
+    return response.status(503).json(healthDetails());
+  }
+});
+
 app.use((_request, _response, next) => {
   ensureStorageInitialized().then(() => next(), next);
 });
@@ -460,7 +497,6 @@ const loginLimiter = rateLimit({
   message: { error: "Too many sign-in attempts. Please try again in 15 minutes." }
 });
 
-app.get("/api/health", (_request, response) => response.json({ status: "ok" }));
 app.get("/api/auth/me", requireAuth, (request, response) => response.json({ user: request.user }));
 
 app.post("/api/auth/login", loginLimiter, async (request, response) => {
