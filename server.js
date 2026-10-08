@@ -476,18 +476,17 @@ app.post("/api/auth/login", loginLimiter, async (request, response) => {
   if (!row?.active || !valid) return response.status(401).json({ error: "Incorrect username or password, or this account is disabled." });
 
   const expiry = Date.now() + 8 * 60 * 60 * 1000;
-  response.cookie(sessionCookie, `${row.id}.${expiry}.${signSession(row.id, expiry)}`, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "strict",
-    path: "/",
-    maxAge: 8 * 60 * 60 * 1000
-  });
+  const sessionValue = `${row.id}.${expiry}.${signSession(row.id, expiry)}`;
+  response.setHeader("Set-Cookie", [
+    `${sessionCookie}=${sessionValue}; Max-Age=28800; Path=/; HttpOnly; SameSite=Strict${isProduction ? "; Secure" : ""}`
+  ]);
   response.json({ user: safeUser(await findUserById(row.id)) });
 });
 
 app.post("/api/auth/logout", (_request, response) => {
-  response.clearCookie(sessionCookie, { httpOnly: true, secure: isProduction, sameSite: "strict", path: "/" });
+  response.setHeader("Set-Cookie", [
+    `${sessionCookie}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict${isProduction ? "; Secure" : ""}`
+  ]);
   response.json({ authenticated: false });
 });
 
