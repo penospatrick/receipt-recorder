@@ -176,6 +176,74 @@ function requirePermission(permission) {
   };
 }
 
+
+const MICROSOFT_SCOPES = "offline_access User.Read Files.ReadWrite";
+const MICROSOFT_AUTHORITY = "https://login.microsoftonline.com/consumers/oauth2/v2.0";
+const MAX_RECEIPT_IMAGE_BYTES = 8 * 1024 * 1024;
+function microsoftRedirectUri(request) {
+  const base = (process.env.APP_URL || `${request.protocol}://${request.get("host")}`).replace(/\/$/, "");
+  return `${base}/api/onedrive/callback`;
+}
+async function getOneDriveAuth() {
+  return database.prepare("SELECT access_token, refresh_token, expires_at, account_email FROM onedrive_auth WHERE id = 1").get();
+}
+async function storeOneDriveTokens(tokens, accountEmail) {
+  const existing = await getOneDriveAuth();
+  const values = { access_token: tokens.access_token, refresh_token: tokens.refresh_token || existing?.refresh_token,
+    expires_at: Date.now() + Number(tokens.expires_in || 3600) * 1000, account_email: accountEmail };
+  if (!values.refresh_token) throw new Error("Microsoft did not return a refresh token. Reconnect and approve offline access.");
+  if (existing) {
+    await database.prepare("UPDATE onedrive_auth SET access_token=@access_token, refresh_token=@refresh_token, expires_at=@expires_at, account_email=@account_email, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(values);
+  } else {
+    await database.prepare("INSERT INTO onedrive_auth (id,access_token,refresh_token,expires_at,account_email) VALUES (1,@access_token,@refresh_token,@expires_at,@account_email)").run(values);
+  }
+}
+async function getOneDriveAccessToken() {
+  const saved = await getOneDriveAuth();
+  if (!saved) throw new Error("OneDrive is not connected. Ask an administrator to connect it first.");
+  if (saved.access_token && Number(saved.expires_at) > Date.now() + 60000) return saved.access_token;
+  const body = new URLSearchParams({ client_id: process.env.MICROSOFT_CLIENT_ID || "",
+    client_secret: process.env.MICROSOFT_CLIENT_SECRET || "", grant_type: "refresh_token",
+    refresh_token: saved.refresh_token, scope: MICROSOFT_SCOPES });
+  const response = await fetch(`${MICROSOFT_AUTHORITY}/token`, { method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"}, body, cache:"no-store" });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error_description || data.error || "Could not refresh Microsoft access.");
+  await storeOneDriveTokens(data, saved.account_email);
+  return data.access_token;
+}
+async function graphRequest(pathname, options = {}) {
+  const token = await getOneDriveAccessToken();
+  const headers = new Headers(options.headers || {});
+  headers.set("Authorization", `Bearer ${token}`);
+  return fetch(`https://graph.microsoft.com/v1.0${pathname}`, {...options, headers, cache:"no-store"});
+}
+async function ensureOneDriveReceiptFolder() {
+  const check = await graphRequest("/me/drive/root:/Receipt%20Uploads");
+  if (check.ok) return;
+  if (check.status !== 404) throw new Error(`Could not access OneDrive: ${await check.text()}`);
+  const created = await graphRequest("/me/drive/root/children", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({name:"Receipt Uploads",folder:{}, "@microsoft.graph.conflictBehavior":"fail"})});
+  if (!created.ok && created.status !== 409) throw new Error(`Could not create Receipt Uploads folder: ${await created.text()}`);
+}
+async function uploadReceiptImage(dataUrl, originalName) {
+  if (typeof dataUrl !== "string") return null;
+  const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error("Choose a valid JPG, PNG, WebP, or GIF image.");
+  const buffer = Buffer.from(match[2], "base64");
+  if (!buffer.length || buffer.length > MAX_RECEIPT_IMAGE_BYTES) throw new Error("Receipt images must be smaller than 8 MB.");
+  if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) throw new Error("Microsoft OneDrive credentials are not configured on the server.");
+  await ensureOneDriveReceiptFolder();
+  const safeName = String(originalName || "receipt-image").replace(/[^A-Za-z0-9._-]/g, "_").slice(-90) || "receipt-image";
+  const filename = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+  const upload = await graphRequest(`/me/drive/root:/Receipt%20Uploads/${encodeURIComponent(filename)}:/content`,
+    {method:"PUT",headers:{"Content-Type":match[1]},body:buffer});
+  const file = await upload.json();
+  if (!upload.ok) throw new Error(file.error?.message || "OneDrive image upload failed.");
+  return {fileId:file.id,webUrl:file.webUrl || null};
+}
+
 function isAdmin(row) {
   const groupPermissions = row?.permissions_json ? JSON.parse(row.permissions_json) : [];
   return row?.active && groupPermissions.includes("users:manage") && groupPermissions.includes("groups:manage");
@@ -340,7 +408,7 @@ async function getReceiptRows(filters) {
   return database.prepare(`
     SELECT r.id, CAST(r.receipt_date AS TEXT) AS receipt_date,
       r.si_or_number, r.particulars, r.amount_cents,
-      r.custom_values, r.created_by, r.created_at,
+      r.custom_values, r.created_by, r.created_at, r.image_url, r.onedrive_file_id,
       COALESCE(u.display_name, r.created_by_name) AS creator_name
     FROM receipts r
     LEFT JOIN users u ON u.id = r.created_by
@@ -484,7 +552,7 @@ app.use(helmet({
     }
   }
 }));
-app.use(express.json({ limit: "32kb" }));
+app.use(express.json({ limit: "12mb" }));
 app.use((request, _response, next) => {
   const cookieHeader = request.headers.cookie || "";
   request.cookies = Object.fromEntries(cookieHeader.split(";").map((part) => {
@@ -506,6 +574,55 @@ const loginLimiter = rateLimit({
 });
 
 app.get("/api/auth/me", requireAuth, (request, response) => response.json({ user: request.user }));
+
+app.get("/api/onedrive/status", requireAuth, async (_request, response) => {
+  const saved = await getOneDriveAuth();
+  response.json({ connected: Boolean(saved), accountEmail: saved?.account_email || null });
+});
+app.get("/api/onedrive/connect", requirePermission("users:manage"), (request, response) => {
+  if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) return response.status(503).send("Set Microsoft client credentials in the server environment first.");
+  const state = crypto.randomBytes(24).toString("hex");
+  const url = new URL(`${MICROSOFT_AUTHORITY}/authorize`);
+  url.searchParams.set("client_id", process.env.MICROSOFT_CLIENT_ID);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("redirect_uri", microsoftRedirectUri(request));
+  url.searchParams.set("response_mode", "query");
+  url.searchParams.set("scope", MICROSOFT_SCOPES);
+  url.searchParams.set("state", state);
+  response.setHeader("Set-Cookie", [`onedrive_oauth_state=${state}; Max-Age=600; Path=/; HttpOnly; SameSite=Lax${isProduction ? "; Secure" : ""}`]);
+  response.redirect(url.toString());
+});
+app.get("/api/onedrive/callback", requirePermission("users:manage"), async (request, response) => {
+  const state = typeof request.query.state === "string" ? request.query.state : "";
+  const savedState = request.cookies?.onedrive_oauth_state || "";
+  const code = typeof request.query.code === "string" ? request.query.code : "";
+  const oauthError = typeof request.query.error_description === "string" ? request.query.error_description :
+    typeof request.query.error === "string" ? request.query.error : "";
+  const clearCookie = `onedrive_oauth_state=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax${isProduction ? "; Secure" : ""}`;
+  if (oauthError) { response.setHeader("Set-Cookie",[clearCookie]); return response.status(400).send(`Microsoft sign-in failed: ${oauthError}`); }
+  if (!code || !state || !savedState || state !== savedState) { response.setHeader("Set-Cookie",[clearCookie]); return response.status(400).send("Invalid OneDrive sign-in state. Try connecting again."); }
+  try {
+    const body = new URLSearchParams({client_id:process.env.MICROSOFT_CLIENT_ID || "",
+      client_secret:process.env.MICROSOFT_CLIENT_SECRET || "", grant_type:"authorization_code", code,
+      redirect_uri:microsoftRedirectUri(request), scope:MICROSOFT_SCOPES});
+    const tokenResponse = await fetch(`${MICROSOFT_AUTHORITY}/token`, {method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},body,cache:"no-store"});
+    const tokens = await tokenResponse.json();
+    if (!tokenResponse.ok) throw new Error(tokens.error_description || tokens.error || "Microsoft token exchange failed.");
+    const profileResponse = await fetch("https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+      {headers:{Authorization:`Bearer ${tokens.access_token}`},cache:"no-store"});
+    const profile = await profileResponse.json();
+    if (!profileResponse.ok) throw new Error(profile.error?.message || "Could not verify Microsoft account.");
+    const email = String(profile.mail || profile.userPrincipalName || "").trim();
+    if (!email) throw new Error("Microsoft did not return an account email.");
+    await storeOneDriveTokens(tokens,email);
+    response.setHeader("Set-Cookie",[clearCookie]);
+    response.redirect("/?onedrive=connected");
+  } catch (error) {
+    response.setHeader("Set-Cookie",[clearCookie]);
+    response.status(502).send(`Could not connect OneDrive: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
+});
 
 app.post("/api/auth/login", loginLimiter, async (request, response) => {
   const username = typeof request.body?.username === "string" ? request.body.username.trim() : "";
@@ -614,6 +731,8 @@ app.get("/api/receipts", requireAuth, async (request, response) => {
     particulars: row.particulars,
     amount: row.amount_cents / 100,
     customValues: JSON.parse(row.custom_values),
+    imageUrl: row.image_url,
+    hasImage: Boolean(row.onedrive_file_id),
     createdBy: row.created_by,
     creatorName: row.creator_name,
     createdAt: row.created_at,
@@ -639,19 +758,41 @@ app.post("/api/receipts", requirePermission("receipts:create"), async (request, 
   const customResult = validateCustomValues(request.body?.customValues || {}, await visibleFields());
   if (customResult.error) return response.status(400).json({ error: customResult.error });
 
-  const result = await database.prepare(`
-    INSERT INTO receipts (receipt_date, si_or_number, particulars, amount_cents, custom_values, created_by, created_by_name)
-    VALUES (@date, @si_or_number, @particulars, @amount_cents, @custom_values, @created_by, @created_by_name)
-  `).run({
-    date,
-    si_or_number: siOrNumber.trim(),
-    particulars: particulars.trim(),
-    amount_cents: Math.round(amountNumber * 100),
-    custom_values: JSON.stringify(customResult.values),
-    created_by: request.user.id,
-    created_by_name: request.user.displayName
-  });
-  response.status(201).json({ id: Number(result.lastInsertRowid) });
+  let uploadedImage = null;
+  try {
+    if (request.body?.imageData) uploadedImage = await uploadReceiptImage(request.body.imageData, request.body.imageName);
+    const result = await database.prepare(`
+      INSERT INTO receipts (receipt_date, si_or_number, particulars, amount_cents, custom_values, created_by, created_by_name, image_url, onedrive_file_id)
+      VALUES (@date, @si_or_number, @particulars, @amount_cents, @custom_values, @created_by, @created_by_name, @image_url, @onedrive_file_id)
+    `).run({
+      date, si_or_number: siOrNumber.trim(), particulars: particulars.trim(),
+      amount_cents: Math.round(amountNumber * 100), custom_values: JSON.stringify(customResult.values),
+      created_by: request.user.id, created_by_name: request.user.displayName,
+      image_url: uploadedImage?.webUrl || null, onedrive_file_id: uploadedImage?.fileId || null
+    });
+    response.status(201).json({id:Number(result.lastInsertRowid),imageUrl:uploadedImage?.webUrl || null});
+  } catch (error) {
+    if (uploadedImage?.fileId) await graphRequest(`/me/drive/items/${encodeURIComponent(uploadedImage.fileId)}`,{method:"DELETE"}).catch(()=>undefined);
+    response.status(502).json({error:error instanceof Error ? error.message : "Could not save receipt image."});
+  }
+});
+
+app.get("/api/receipts/:id/image", requireAuth, async (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return response.status(400).json({error:"Select a valid receipt."});
+  const receipt = await database.prepare("SELECT id, created_by, onedrive_file_id FROM receipts WHERE id = ?").get(id);
+  if (!receipt?.onedrive_file_id) return response.status(404).json({error:"No image is attached to this receipt."});
+  if (!userCan("receipts:read_own", receipt, request.user) && !userHas("receipts:read_all", request.user)) {
+    return response.status(403).json({error:"Your user group cannot view this receipt image."});
+  }
+  try {
+    const image = await graphRequest(`/me/drive/items/${encodeURIComponent(receipt.onedrive_file_id)}/content`);
+    if (!image.ok) return response.status(502).json({error:"Could not load image from OneDrive."});
+    response.setHeader("Content-Type", image.headers.get("content-type") || "application/octet-stream");
+    response.setHeader("Cache-Control","private, no-store");
+    response.setHeader("X-Content-Type-Options","nosniff");
+    response.send(Buffer.from(await image.arrayBuffer()));
+  } catch (error) { response.status(502).json({error:error instanceof Error ? error.message : "Could not load image."}); }
 });
 
 app.put("/api/receipts/:id", requireAuth, async (request, response) => {
@@ -696,10 +837,16 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
 app.delete("/api/receipts/:id", requireAuth, async (request, response) => {
   const receiptId = Number(request.params.id);
   if (!Number.isSafeInteger(receiptId) || receiptId <= 0) return response.status(400).json({ error: "Select a valid receipt." });
-  const receipt = await database.prepare("SELECT id, created_by FROM receipts WHERE id = ?").get(receiptId);
+  const receipt = await database.prepare("SELECT id, created_by, onedrive_file_id FROM receipts WHERE id = ?").get(receiptId);
   if (!receipt) return response.status(404).json({ error: "Receipt not found." });
   if (!userCan("receipts:delete_own", receipt, request.user)) {
     return response.status(403).json({ error: "Your user group cannot delete this receipt." });
+  }
+  if (receipt.onedrive_file_id) {
+    try {
+      const driveDelete = await graphRequest(`/me/drive/items/${encodeURIComponent(receipt.onedrive_file_id)}`, {method:"DELETE"});
+      if (!driveDelete.ok && driveDelete.status !== 404) return response.status(502).json({error:"Could not delete the image from OneDrive; receipt was not deleted."});
+    } catch (error) { return response.status(502).json({error:error instanceof Error ? error.message : "Could not delete the OneDrive image."}); }
   }
   await database.prepare("DELETE FROM receipts WHERE id = ?").run(receiptId);
   response.json({ deleted: true });
