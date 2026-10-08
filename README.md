@@ -54,7 +54,7 @@ Administrators can create multiple accounts from **Create users in bulk** by dow
 
 In **Custom fields**, administrators can add text, number, date, or dropdown fields and mark them required. They appear on the receipt form and as additional Excel columns. Archiving a field keeps its existing receipt values for history and export.
 
-Excel filters include a date range, SI/OR number, particulars, amount bounds, user group, entering user, and any active custom fields. Use **Preview matching receipts** to check the filtered set before downloading. The server applies the same filters to the workbook and enforces the signed-in user's data permissions.
+Excel filters include a date range, amount bounds, user group, entering user, and any active custom fields. Select a user group to limit the **Entered by** list to active users in that group. Use **Preview matching receipts** to check the filtered set before downloading. The server applies the selected filters to the workbook and enforces the signed-in user's data permissions.
 
 ## Access
 

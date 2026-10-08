@@ -208,7 +208,6 @@ function buildFilterQuery() {
   const params = new URLSearchParams();
   const values = [
     ["from", "#filter-from"], ["to", "#filter-to"],
-    ["siOrNumber", "#filter-si-or"], ["particulars", "#filter-particulars"],
     ["amountMin", "#filter-amount-min"], ["amountMax", "#filter-amount-max"],
     ["groupId", "#filter-group"], ["userId", "#filter-user"]
   ];
@@ -366,11 +365,12 @@ function fillSelect(select, options, blankLabel) {
 }
 
 function renderExportFilters() {
+  const groupSelect = document.querySelector("#filter-group");
+  const selectedGroup = groupSelect.value;
   const groupOptions = appState.groups.map((group) => ({ label: group.name, value: group.id }));
-  const userOptions = appState.users.filter((user) => user.active)
-    .map((user) => ({ label: `${user.displayName} (${user.username})`, value: user.id }));
-  fillSelect(document.querySelector("#filter-group"), groupOptions, "All groups");
-  fillSelect(document.querySelector("#filter-user"), userOptions, "All users");
+  fillSelect(groupSelect, groupOptions, "All groups");
+  if (groupOptions.some((group) => String(group.value) === selectedGroup)) groupSelect.value = selectedGroup;
+  updateEnteredByOptions();
   document.querySelector("#filter-group-wrap").hidden = !userHas("receipts:read_all");
   document.querySelector("#filter-user-wrap").hidden = !userHas("receipts:read_all");
   const container = document.querySelector("#custom-filters");
@@ -393,6 +393,19 @@ function renderExportFilters() {
     container.append(wrapper);
   }
 }
+
+function updateEnteredByOptions() {
+  const userSelect = document.querySelector("#filter-user");
+  const selectedUser = userSelect.value;
+  const groupId = document.querySelector("#filter-group").value;
+  const userOptions = appState.users
+    .filter((user) => user.active && (!groupId || String(user.groupId) === groupId))
+    .map((user) => ({ label: `${user.displayName} (${user.username})`, value: user.id }));
+  fillSelect(userSelect, userOptions, "All users");
+  if (userOptions.some((user) => String(user.value) === selectedUser)) userSelect.value = selectedUser;
+}
+
+document.querySelector("#filter-group").addEventListener("change", updateEnteredByOptions);
 
 async function loadWorkspaceData() {
   const { fields } = await api("/api/fields");
@@ -470,6 +483,7 @@ document.querySelector("#export-button").addEventListener("click", async () => {
 
 document.querySelector("#clear-filters").addEventListener("click", async () => {
   document.querySelector("#export-filter-form").reset();
+  updateEnteredByOptions();
   await loadReceipts(false);
   showMessage(exportMessage, "Filters cleared.");
 });
