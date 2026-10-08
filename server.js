@@ -12,7 +12,7 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const bootstrapPassword = process.env.ACCOUNTING_PASSWORD;
 const sessionSecret = process.env.SESSION_SECRET;
-const isProduction = process.env.NODE_ENV === "production";
+const isProduction = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
 const sessionCookie = "receipt_session";
 const permissions = [
   { key: "receipts:create", label: "Create receipts" },
@@ -40,6 +40,8 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 }
 
 const database = new ReceiptDatabase();
+let storageInitialization;
+if (process.env.VERCEL) app.set("trust proxy", 1);
 
 const defaultGroups = [
   {
@@ -114,6 +116,16 @@ function safeUser(row) {
     active: Boolean(row.active),
     permissions: JSON.parse(row.permissions_json)
   };
+}
+
+function ensureStorageInitialized() {
+  if (!storageInitialization) {
+    storageInitialization = initializeStorage().catch((error) => {
+      storageInitialization = undefined;
+      throw error;
+    });
+  }
+  return storageInitialization;
 }
 
 function signSession(userId, expiry) {
@@ -409,6 +421,9 @@ async function queryPermissionsForGroup(groupId) {
 }
 
 app.disable("x-powered-by");
+app.use((_request, _response, next) => {
+  ensureStorageInitialized().then(() => next(), next);
+});
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -918,7 +933,7 @@ if (require.main === module) {
 }
 
 async function start() {
-  await initializeStorage();
+  await ensureStorageInitialized();
   httpServer = app.listen(port, "0.0.0.0");
   await new Promise((resolve, reject) => {
     httpServer.once("listening", resolve);

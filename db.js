@@ -110,7 +110,7 @@ class ReceiptDatabase {
           ca: fs.readFileSync(path.join(__dirname, "certs", "supabase-root-ca-2021.crt"), "utf8"),
           rejectUnauthorized: true
         },
-        max: Number(process.env.DB_POOL_MAX || 10),
+        max: Number(process.env.DB_POOL_MAX || (process.env.VERCEL ? 1 : 10)),
         connectionTimeoutMillis: 10000,
         idleTimeoutMillis: 30000
       });
@@ -119,6 +119,9 @@ class ReceiptDatabase {
       });
       this.database = this.pool;
     } else {
+      if (process.env.VERCEL) {
+        throw new Error("Set SUPABASE_DB_URL or DATABASE_URL to a PostgreSQL connection string when deploying to Vercel.");
+      }
       const dataDirectory = path.resolve(process.env.DATA_DIR || path.join(__dirname, "data"));
       fs.mkdirSync(dataDirectory, { recursive: true });
       this.sqlitePath = path.join(dataDirectory, "receipts.sqlite");

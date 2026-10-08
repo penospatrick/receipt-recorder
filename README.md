@@ -19,6 +19,19 @@ A phone-friendly receipt register with individual staff sign-in, permission-mana
 
 When `SUPABASE_DB_URL` or `DATABASE_URL` is set to a PostgreSQL URI, the server initializes and uses Supabase PostgreSQL. Otherwise, it uses local SQLite at `data/receipts.sqlite`. A PostgreSQL URI in `SUPABASE_URL` is also supported. To make the app accessible to staff outside your computer, deploy this Node.js server to a hosting service and configure the database URI, `ACCOUNTING_PASSWORD`, `ADMIN_USERNAME`, `SESSION_SECRET`, `NODE_ENV=production`, and `PORT` as private environment variables in the host. Set a custom start command of `npm start`; hosting and the database are separate services. Share the deployed **HTTPS** address with staff. Do not deploy as a static-only site.
 
+## Deploy to Vercel
+
+This project can run on Vercel as an Express application backed by Supabase. Import the GitHub repository as a new Vercel project and use the repository root; Vercel detects the root `server.js` Express entry point. No build command or output directory is required. Vercel serves files in `public/` from its CDN, and the Express function handles API requests. Database schema and root-CA files are included in the function.
+
+Add these environment variables in **Project Settings → Environment Variables**:
+
+- `SUPABASE_DB_URL`: the PostgreSQL connection string from Supabase **Project Settings → Database → Connect**. Use the Supavisor transaction pooler for serverless deployments, and keep the URI private.
+- `ACCOUNTING_PASSWORD`: a strong bootstrap password. It is used only if the initial admin account does not already exist in the database.
+- `ADMIN_USERNAME`: `admin`, unless using a different bootstrap username.
+- `SESSION_SECRET`: a unique random string of at least 32 characters.
+
+Set the variables for the Production environment. For Preview deployments, use a separate Supabase project/database so preview testing cannot modify production receipts. Vercel provides HTTPS; the app automatically marks authentication cookies as secure and uses one database connection per function instance. SQLite is intentionally rejected on Vercel because its filesystem is not persistent. After deployment, check `/api/health`, sign in, and verify receipt entry and Excel export.
+
 The server connects to PostgreSQL using `pg` and validates TLS against Supabase's public root CA (`certs/supabase-root-ca-2021.crt`); certificate verification stays enabled. The Supabase database password never reaches the browser. Row Level Security is enabled on the app tables. Keep the database connection string private and only use it as a server environment variable.
 
 Run the API and Excel-export regression tests with `npm test`.
