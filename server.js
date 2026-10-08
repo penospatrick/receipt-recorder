@@ -948,4 +948,14 @@ async function start() {
   return httpServer;
 }
 
-module.exports = { app, start, get httpServer() { return httpServer; }, database };
+app.app = app;
+app.start = start;
+app.database = database;
+Object.defineProperty(app, "httpServer", {
+  enumerable: true,
+  get() {
+    return httpServer;
+  }
+});
+
+module.exports = app;
