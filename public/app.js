@@ -28,7 +28,8 @@ const appState = {
   editingUserId: null,
   editingGroupId: null,
   editingFieldId: null,
-  receipts: []
+  receipts: [],
+  adminModule: null
 };
 
 function localDateString(date = new Date()) {
@@ -63,6 +64,7 @@ function userHas(permission) {
 
 function setAuthenticated(user) {
   appState.user = user;
+  if (!user) appState.adminModule = null;
   body.classList.toggle("authenticated", Boolean(user));
   document.querySelector("#session-button-label").textContent = user
     ? `${user.displayName} · Sign out`
@@ -483,30 +485,31 @@ document.querySelector("#refresh-button").addEventListener("click", () => loadRe
 
 function showAdminPanes() {
   if (!appState.user) return;
-  const visibleTabs = [];
-  if (userHas("users:manage")) visibleTabs.push("users");
-  if (userHas("groups:manage")) visibleTabs.push("groups");
-  if (userHas("fields:manage")) visibleTabs.push("fields");
-  for (const button of document.querySelectorAll(".admin-tab")) {
-    button.hidden = !visibleTabs.includes(button.dataset.adminTab);
-  }
-  const activeTab = visibleTabs.includes(document.querySelector(".admin-tab.active")?.dataset.adminTab)
-    ? document.querySelector(".admin-tab.active").dataset.adminTab
-    : visibleTabs[0];
-  for (const button of document.querySelectorAll(".admin-tab")) {
-    button.classList.toggle("active", button.dataset.adminTab === activeTab);
+  const visibleModules = [];
+  if (userHas("users:manage")) visibleModules.push("users");
+  if (userHas("groups:manage")) visibleModules.push("groups");
+  if (userHas("fields:manage")) visibleModules.push("fields");
+  if (appState.adminModule && !visibleModules.includes(appState.adminModule)) appState.adminModule = null;
+  document.querySelector("#admin-module-home").hidden = Boolean(appState.adminModule);
+  for (const button of document.querySelectorAll("[data-admin-open]")) {
+    button.hidden = !visibleModules.includes(button.dataset.adminOpen);
   }
   for (const pane of document.querySelectorAll(".admin-pane")) {
-    pane.hidden = pane.id !== `admin-${activeTab}-pane`;
+    pane.hidden = pane.dataset.adminModule !== appState.adminModule;
   }
 }
 
-document.querySelectorAll(".admin-tab").forEach((button) => {
+document.querySelectorAll("[data-admin-open]").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll(".admin-tab").forEach((tab) => tab.classList.toggle("active", tab === button));
-    document.querySelectorAll(".admin-pane").forEach((pane) => {
-      pane.hidden = pane.id !== `admin-${button.dataset.adminTab}-pane`;
-    });
+    appState.adminModule = button.dataset.adminOpen;
+    showAdminPanes();
+  });
+});
+
+document.querySelectorAll("[data-admin-home]").forEach((button) => {
+  button.addEventListener("click", () => {
+    appState.adminModule = null;
+    showAdminPanes();
   });
 });
 

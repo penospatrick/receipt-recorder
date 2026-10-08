@@ -131,14 +131,32 @@
             <p class="admin-description">Manage staff access, group permissions, and the fields on every receipt.</p>
           </div>
         </div>
-        <nav class="admin-tabs" aria-label="Administration sections">
-          <button class="admin-tab active" data-admin-tab="users" type="button">Users</button>
-          <button class="admin-tab" data-admin-tab="groups" type="button">User groups</button>
-          <button class="admin-tab" data-admin-tab="fields" type="button">Custom fields</button>
-        </nav>
         <div class="admin-content">
-          <section class="admin-pane" id="admin-users-pane">
-            <div class="admin-section-heading"><div><h3>User accounts</h3><p>Create, edit, or deactivate staff accounts.</p></div></div>
+          <section class="admin-module-home" id="admin-module-home" aria-label="Administration modules">
+            <button class="admin-module-card" data-admin-open="users" type="button">
+              <span class="admin-module-icon" aria-hidden="true">01</span>
+              <span class="admin-module-title">Users</span>
+              <span class="admin-module-description">Create staff accounts, manage access, and reset passwords.</span>
+              <span class="admin-module-link">Open users <span aria-hidden="true">→</span></span>
+            </button>
+            <button class="admin-module-card" data-admin-open="groups" type="button">
+              <span class="admin-module-icon" aria-hidden="true">02</span>
+              <span class="admin-module-title">User groups</span>
+              <span class="admin-module-description">Organize staff and control what each group is allowed to do.</span>
+              <span class="admin-module-link">Open user groups <span aria-hidden="true">→</span></span>
+            </button>
+            <button class="admin-module-card" data-admin-open="fields" type="button">
+              <span class="admin-module-icon" aria-hidden="true">03</span>
+              <span class="admin-module-title">Custom fields</span>
+              <span class="admin-module-description">Configure extra information collected on each receipt.</span>
+              <span class="admin-module-link">Open custom fields <span aria-hidden="true">→</span></span>
+            </button>
+          </section>
+          <section class="admin-pane" id="admin-users-pane" data-admin-module="users" hidden>
+            <div class="admin-module-header">
+              <button class="admin-back-button" data-admin-home type="button"><span aria-hidden="true">←</span> All admin modules</button>
+              <div class="admin-section-heading"><div><h3>User accounts</h3><p>Create, edit, or deactivate staff accounts.</p></div></div>
+            </div>
             <form class="admin-form user-form" id="user-form">
               <input id="user-edit-id" type="hidden">
               <div class="admin-form-grid">
@@ -180,8 +198,11 @@
             </section>
             <div class="table-scroll"><table><thead><tr><th>Name</th><th>Username</th><th>Group</th><th>Status</th><th>Actions</th></tr></thead><tbody id="users-table-body"></tbody></table></div>
           </section>
-          <section class="admin-pane" id="admin-groups-pane" hidden>
-            <div class="admin-section-heading"><div><h3>Permission groups</h3><p>Choose what members of each group can view or change.</p></div></div>
+          <section class="admin-pane" id="admin-groups-pane" data-admin-module="groups" hidden>
+            <div class="admin-module-header">
+              <button class="admin-back-button" data-admin-home type="button"><span aria-hidden="true">←</span> All admin modules</button>
+              <div class="admin-section-heading"><div><h3>Permission groups</h3><p>Choose what members of each group can view or change.</p></div></div>
+            </div>
             <div class="group-layout">
               <div class="group-list" id="groups-list"></div>
               <form class="admin-form group-form" id="group-form">
@@ -198,8 +219,11 @@
               </form>
             </div>
           </section>
-          <section class="admin-pane" id="admin-fields-pane" hidden>
-            <div class="admin-section-heading"><div><h3>Receipt fields</h3><p>Add fields to receipt entry and the Excel export. Archived fields and their saved values remain in existing records and exports.</p></div></div>
+          <section class="admin-pane" id="admin-fields-pane" data-admin-module="fields" hidden>
+            <div class="admin-module-header">
+              <button class="admin-back-button" data-admin-home type="button"><span aria-hidden="true">←</span> All admin modules</button>
+              <div class="admin-section-heading"><div><h3>Receipt fields</h3><p>Add fields to receipt entry and the Excel export. Archived fields and their saved values remain in existing records and exports.</p></div></div>
+            </div>
             <form class="admin-form field-form" id="field-form">
               <input id="field-edit-id" type="hidden">
               <div class="admin-form-grid">
