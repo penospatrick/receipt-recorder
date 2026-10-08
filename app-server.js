@@ -79,7 +79,8 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
 function findUserById(userId) {
   return database.prepare(`
     SELECT u.id, u.username, u.display_name, u.group_id, u.active,
-      u.must_change_password, g.name AS group_name, g.permissions_json
+      u.must_change_password, u.session_version,
+      g.name AS group_name, g.permissions_json
     FROM users u JOIN groups g ON g.id = u.group_id
     WHERE u.id = ?
   `).get(userId);
@@ -134,24 +135,26 @@ function ensureStorageInitialized() {
   return storageInitialization;
 }
 
-function signSession(userId, expiry) {
+function signSession(userId, expiry, sessionVersion) {
   return crypto.createHmac("sha256", sessionSecret)
-    .update(`${userId}.${expiry}`)
+    .update(`${userId}.${expiry}.${sessionVersion}`)
     .digest("base64url");
 }
 
 async function authenticate(request, _response, next) {
   const token = request.cookies?.[sessionCookie];
   if (token) {
-    const [userIdText, expiryText, signature] = token.split(".");
+    const [userIdText, expiryText, sessionVersionText, signature] = token.split(".");
     const userId = Number(userIdText);
     const expiry = Number(expiryText);
-    if (Number.isSafeInteger(userId) && Number.isSafeInteger(expiry) && expiry > Date.now() && signature) {
-      const expected = Buffer.from(signSession(userId, expiry));
+    const sessionVersion = Number(sessionVersionText);
+    if (Number.isSafeInteger(userId) && Number.isSafeInteger(expiry) &&
+        Number.isSafeInteger(sessionVersion) && expiry > Date.now() && signature) {
+      const expected = Buffer.from(signSession(userId, expiry, sessionVersion));
       const actual = Buffer.from(signature);
       if (actual.length === expected.length && crypto.timingSafeEqual(actual, expected)) {
         const row = await findUserById(userId);
-        if (row?.active) request.user = safeUser(row);
+        if (row?.active && row.session_version === sessionVersion) request.user = safeUser(row);
       }
     }
   }
@@ -496,7 +499,7 @@ app.use(express.static(path.join(__dirname, "public"), { etag: true, maxAge: isP
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: process.env.NODE_ENV === "test" ? 100 : 10,
   standardHeaders: "draft-8",
   legacyHeaders: false,
   message: { error: "Too many sign-in attempts. Please try again in 15 minutes." }
@@ -508,7 +511,7 @@ app.post("/api/auth/login", loginLimiter, async (request, response) => {
   const username = typeof request.body?.username === "string" ? request.body.username.trim() : "";
   const password = typeof request.body?.password === "string" ? request.body.password : "";
   const row = await database.prepare(`
-    SELECT u.id, u.password_salt, u.password_hash, u.active
+    SELECT u.id, u.password_salt, u.password_hash, u.session_version, u.active
     FROM users u WHERE u.username = ? COLLATE NOCASE
   `).get(username);
   const passwordHash = crypto.scryptSync(password, row?.password_salt || "receipt-recorder-invalid-user", 64);
@@ -517,7 +520,7 @@ app.post("/api/auth/login", loginLimiter, async (request, response) => {
   if (!row?.active || !valid) return response.status(401).json({ error: "Incorrect username or password, or this account is disabled." });
 
   const expiry = Date.now() + 8 * 60 * 60 * 1000;
-  const sessionValue = `${row.id}.${expiry}.${signSession(row.id, expiry)}`;
+  const sessionValue = `${row.id}.${expiry}.${row.session_version}.${signSession(row.id, expiry, row.session_version)}`;
   response.setHeader("Set-Cookie", [
     `${sessionCookie}=${sessionValue}; Max-Age=28800; Path=/; HttpOnly; SameSite=Strict${isProduction ? "; Secure" : ""}`
   ]);
@@ -548,10 +551,14 @@ app.post("/api/auth/change-password", requireAuth, async (request, response) => 
   const credentials = hashPassword(password);
   await database.prepare(`
     UPDATE users
-    SET password_salt = ?, password_hash = ?, must_change_password = 0
+    SET password_salt = ?, password_hash = ?, must_change_password = 0,
+      session_version = session_version + 1
     WHERE id = ?
   `).run(credentials.salt, credentials.hash, request.user.id);
-  response.json({ user: safeUser(await findUserById(request.user.id)) });
+  response.setHeader("Set-Cookie", [
+    `${sessionCookie}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict${isProduction ? "; Secure" : ""}`
+  ]);
+  response.json({ updated: true, username: request.user.username });
 });
 
 app.use("/api", (request, response, next) => {
@@ -919,13 +926,16 @@ app.put("/api/admin/users/:id", requirePermission("users:manage"), async (reques
   }
 
   const credentials = password ? hashPassword(password) : null;
+  const accountStatusChanged = Boolean(current.active) !== active;
   try {
     await database.prepare(`
       UPDATE users
       SET username = @username, display_name = @display_name, group_id = @group_id,
         active = @active,
         password_salt = COALESCE(@password_salt, password_salt),
-        password_hash = COALESCE(@password_hash, password_hash)
+        password_hash = COALESCE(@password_hash, password_hash),
+        must_change_password = CASE WHEN @session_version_increment = 1 THEN 1 ELSE must_change_password END,
+        session_version = session_version + @session_version_increment
       WHERE id = @id
     `).run({
       id: userId,
@@ -933,10 +943,16 @@ app.put("/api/admin/users/:id", requirePermission("users:manage"), async (reques
       display_name: displayName,
       group_id: groupId,
       active: active ? 1 : 0,
+      session_version_increment: credentials || accountStatusChanged ? 1 : 0,
       password_salt: credentials?.salt || null,
       password_hash: credentials?.hash || null
     });
-    response.json({ updated: true });
+    if (credentials && userId === request.user.id) {
+      response.setHeader("Set-Cookie", [
+        `${sessionCookie}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict${isProduction ? "; Secure" : ""}`
+      ]);
+    }
+    response.json({ updated: true, signedOut: Boolean(credentials && userId === request.user.id) });
   } catch (error) {
     if (error.code === "SQLITE_CONSTRAINT_UNIQUE" || error.code === "23505") return response.status(409).json({ error: "That username is already in use." });
     throw error;

@@ -8,6 +8,7 @@ const ExcelJS = require("exceljs");
 process.env.ACCOUNTING_PASSWORD = "bootstrap-admin-password-test";
 process.env.ADMIN_USERNAME = "admin";
 process.env.SESSION_SECRET = "receipt-recorder-test-session-secret-32";
+process.env.NODE_ENV = "test";
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "receipt-recorder-test-"));
 process.env.PORT = "0";
 process.env.SUPABASE_DB_URL = "";
@@ -335,18 +336,116 @@ test("bulk user template and partial import enforce a first-sign-in password cha
     password: "Permanent-password-01"
   }, importedSession);
   assert.equal(passwordChange.status, 200);
-  assert.equal((await passwordChange.json()).user.mustChangePassword, false);
-  const allowed = await fetch(`${baseUrl}/api/receipts`, { headers: { cookie: importedSession } });
-  assert.equal(allowed.status, 200);
+  assert.equal((await passwordChange.json()).username, "bulkstaff");
+  assert.match(passwordChange.headers.get("set-cookie"), /Max-Age=0/);
+  const signedOut = await fetch(`${baseUrl}/api/receipts`, { headers: { cookie: importedSession } });
+  assert.equal(signedOut.status, 401);
 
-  const oldPassword = await post("/api/auth/login", {
-    username: "bulkstaff",
-    password: "Temporary-password-01"
-  });
-  assert.equal(oldPassword.status, 401);
   const newPassword = await post("/api/auth/login", {
     username: "bulkstaff",
     password: "Permanent-password-01"
   });
   assert.equal(newPassword.status, 200);
+  const newSession = newPassword.headers.get("set-cookie").split(";")[0];
+  const { user: updatedUser } = await json(await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { cookie: newSession }
+  }));
+  assert.equal(updatedUser.mustChangePassword, false);
+  const allowed = await fetch(`${baseUrl}/api/receipts`, { headers: { cookie: newSession } });
+  assert.equal(allowed.status, 200);
+});
+
+test("disabling a user blocks sign-in and revokes sessions, including after re-enabling", async () => {
+  const aliceSession = await login("alice", "Field-officer-password-01");
+  const disable = await fetch(`${baseUrl}/api/admin/users/${aliceId}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({
+      username: "alice",
+      displayName: "Alice Officer",
+      groupId: fieldOfficerGroupId,
+      active: false
+    })
+  });
+  assert.equal(disable.status, 200);
+
+  const disabledList = await json(await fetch(`${baseUrl}/api/admin/users`, {
+    headers: { cookie: adminCookie }
+  }));
+  assert.equal(disabledList.users.find((user) => user.id === aliceId).active, false);
+  assert.equal((await fetch(`${baseUrl}/api/auth/me`, { headers: { cookie: aliceSession } })).status, 401);
+  assert.equal((await post("/api/auth/login", {
+    username: "alice",
+    password: "Field-officer-password-01"
+  })).status, 401);
+
+  const enable = await fetch(`${baseUrl}/api/admin/users/${aliceId}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({
+      username: "alice",
+      displayName: "Alice Officer",
+      groupId: fieldOfficerGroupId,
+      active: true
+    })
+  });
+  assert.equal(enable.status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/auth/me`, { headers: { cookie: aliceSession } })).status, 401);
+  const enabledLogin = await post("/api/auth/login", {
+    username: "alice",
+    password: "Field-officer-password-01"
+  });
+  assert.equal(enabledLogin.status, 200);
+});
+
+test("administrator password reset forces a new password and revokes all account sessions", async () => {
+  const secondAliceSession = await login("alice", "Field-officer-password-01");
+  const reset = await fetch(`${baseUrl}/api/admin/users/${aliceId}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({
+      username: "alice",
+      displayName: "Alice Officer",
+      groupId: fieldOfficerGroupId,
+      password: "Temporary-admin-reset-01"
+    })
+  });
+  assert.equal(reset.status, 200);
+
+  for (const cookie of [officerCookie, secondAliceSession]) {
+    const invalidated = await fetch(`${baseUrl}/api/auth/me`, { headers: { cookie } });
+    assert.equal(invalidated.status, 401);
+  }
+
+  const temporaryLogin = await post("/api/auth/login", {
+    username: "alice",
+    password: "Temporary-admin-reset-01"
+  });
+  assert.equal(temporaryLogin.status, 200);
+  const temporarySession = temporaryLogin.headers.get("set-cookie").split(";")[0];
+  const { user } = await json(await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { cookie: temporarySession }
+  }));
+  assert.equal(user.mustChangePassword, true);
+  const blocked = await fetch(`${baseUrl}/api/receipts`, { headers: { cookie: temporarySession } });
+  assert.equal(blocked.status, 403);
+
+  const passwordChange = await post("/api/auth/change-password", {
+    password: "Alice-new-password-01"
+  }, temporarySession);
+  assert.equal(passwordChange.status, 200);
+  const invalidatedTemporarySession = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { cookie: temporarySession }
+  });
+  assert.equal(invalidatedTemporarySession.status, 401);
+
+  const ownPasswordLogin = await post("/api/auth/login", {
+    username: "alice",
+    password: "Alice-new-password-01"
+  });
+  assert.equal(ownPasswordLogin.status, 200);
+  const { user: alice } = await json(await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { cookie: ownPasswordLogin.headers.get("set-cookie").split(";")[0] }
+  }));
+  assert.equal(alice.mustChangePassword, false);
 });

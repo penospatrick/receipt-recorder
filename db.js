@@ -21,6 +21,7 @@ const sqliteSchema = `
     password_hash TEXT NOT NULL,
     group_id INTEGER NOT NULL REFERENCES groups(id),
     must_change_password INTEGER NOT NULL DEFAULT 0,
+    session_version INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -149,12 +150,18 @@ class ReceiptDatabase {
       await this.pool.query(
         "ALTER TABLE public.users ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 0"
       );
+      await this.pool.query(
+        "ALTER TABLE public.users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0"
+      );
     } else {
       this.database.exec(sqliteSchema);
       const existingColumns = this.database.pragma("table_info(receipts)");
       const existingUserColumns = this.database.pragma("table_info(users)");
       if (!existingUserColumns.some((column) => column.name === "must_change_password")) {
         this.database.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0");
+      }
+      if (!existingUserColumns.some((column) => column.name === "session_version")) {
+        this.database.exec("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0");
       }
       const migrations = [
         ["custom_values", "TEXT NOT NULL DEFAULT '{}'"],

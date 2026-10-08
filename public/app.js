@@ -48,7 +48,13 @@ async function readJson(response) {
 }
 
 async function api(path, options = {}) {
-  return readJson(await fetch(path, options));
+  const response = await fetch(path, options);
+  if (response.status === 401 && appState.user) {
+    setAuthenticated(null);
+    showMessage(loginMessage, "Your session has ended. Sign in again.");
+    loginForm.elements.username.focus();
+  }
+  return readJson(response);
 }
 
 function userHas(permission) {
@@ -667,7 +673,8 @@ function beginEditUser(user) {
   const password = document.querySelector("#user-password");
   password.value = "";
   password.required = false;
-  password.placeholder = "Leave blank to keep current password";
+  password.placeholder = "Leave blank to keep current password; a reset requires a new password";
+  document.querySelector("#user-password-label").textContent = "Reset password";
   document.querySelector("#user-submit").textContent = "Save changes";
   document.querySelector("#user-cancel").hidden = false;
   showMessage(document.querySelector("#user-message"), `Editing ${user.displayName}.`);
@@ -680,6 +687,7 @@ function resetUserForm() {
   const password = document.querySelector("#user-password");
   password.required = true;
   password.placeholder = "At least 10 characters";
+  document.querySelector("#user-password-label").textContent = "Password";
   document.querySelector("#user-submit").textContent = "Create user";
   document.querySelector("#user-cancel").hidden = true;
   showMessage(document.querySelector("#user-message"), "");
@@ -697,7 +705,7 @@ passwordChangeForm.addEventListener("submit", async (event) => {
   button.disabled = true;
   showMessage(passwordChangeMessage, "");
   try {
-    const { user } = await api("/api/auth/change-password", {
+    const { username } = await api("/api/auth/change-password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password })
@@ -707,7 +715,9 @@ passwordChangeForm.addEventListener("submit", async (event) => {
     loginForm.hidden = false;
     document.querySelector("#login-title").textContent = "Sign in to your workspace";
     document.querySelector(".login-copy").textContent = "Enter the username and password provided by your system administrator.";
-    await openWorkspace(user);
+    loginForm.elements.username.value = username;
+    loginForm.elements.password.focus();
+    showMessage(loginMessage, "Your password has been updated. Sign in with your new password.");
   } catch (error) {
     showMessage(passwordChangeMessage, error.message, true);
   } finally {
@@ -740,15 +750,25 @@ document.querySelector("#user-form").addEventListener("submit", async (event) =>
     password: document.querySelector("#user-password").value
   };
   try {
-    await api(editingId ? `/api/admin/users/${editingId}` : "/api/admin/users", {
+    const result = await api(editingId ? `/api/admin/users/${editingId}` : "/api/admin/users", {
       method: editingId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+    if (result.signedOut) {
+      resetUserForm();
+      setAuthenticated(null);
+      loginForm.elements.username.value = payload.username;
+      showMessage(loginMessage, "Your password was reset. Sign in with the temporary password, then set your own password.");
+      return;
+    }
     resetUserForm();
     await loadUsers();
     if (userHas("receipts:read_all") && userHas("receipts:export")) renderExportFilters();
-    showMessage(document.querySelector("#user-message"), editingId ? "User updated." : "User account created.");
+    const message = editingId && payload.password
+      ? "Password reset. The user must set a new password at next sign-in; all existing sessions were signed out."
+      : editingId ? "User updated." : "User account created.";
+    showMessage(document.querySelector("#user-message"), message);
   } catch (error) {
     showMessage(document.querySelector("#user-message"), error.message, true);
   }
@@ -835,6 +855,10 @@ async function toggleUser(user) {
     });
     await loadUsers();
     if (userHas("receipts:read_all") && userHas("receipts:export")) renderExportFilters();
+    showMessage(
+      document.querySelector("#user-message"),
+      `Account ${user.active ? "disabled" : "enabled"}; existing sessions were signed out.`
+    );
   } catch (error) {
     showMessage(document.querySelector("#user-message"), error.message, true);
   }
