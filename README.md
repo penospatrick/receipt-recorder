@@ -4,7 +4,7 @@ A phone-friendly receipt register with individual staff sign-in, permission-mana
 
 ## Requirements
 
-- Node.js 22 or later
+- Node.js 22
 - A Supabase project for shared, cloud-hosted storage, or a writable disk for local SQLite
 - HTTPS in production so the accounting session cookie is protected
 
@@ -33,6 +33,8 @@ Add these environment variables in **Project Settings → Environment Variables*
 Set the variables for the Production environment. For Preview deployments, use a separate Supabase project/database so preview testing cannot modify production receipts. Vercel provides HTTPS; the app automatically marks authentication cookies as secure and uses one database connection per function instance. SQLite is intentionally rejected on Vercel because its filesystem is not persistent. After deployment, check `/api/health`, sign in, and verify receipt entry and Excel export.
 
 `ACCOUNTING_PASSWORD` is only used to create the initial administrator if that username is not already in the database. Changing the Vercel variable does not change an existing account's password; update it while signed in as an administrator.
+
+The manifest pins Vercel to Node.js 22 and explicitly approves the pinned `better-sqlite3` native install script required by the local SQLite backend.
 
 The server connects to PostgreSQL using `pg` and validates TLS against Supabase's public root CA (`certs/supabase-root-ca-2021.crt`); certificate verification stays enabled. The Supabase database password never reaches the browser. Row Level Security is enabled on the app tables. Keep the database connection string private and only use it as a server environment variable.
 

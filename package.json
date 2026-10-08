@@ -11,7 +11,7 @@
     "migrate:supabase": "node scripts/migrate-supabase.js"
   },
   "engines": {
-    "node": ">=22"
+    "node": "22.x"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -23,5 +23,8 @@
     "express-rate-limit": "^8.0.1",
     "helmet": "^8.1.0",
     "pg": "^8.16.3"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }
