@@ -65,7 +65,7 @@ The bootstrap admin account is created only on the first startup when its userna
 
 ## Optional OneDrive receipt images
 
-The app can save an optional receipt photo (the mobile picker may open the camera) to a central Zurich Finance Corporation work/school OneDrive account. Image bytes are uploaded to the OneDrive `Receipt Uploads` folder; Supabase stores only receipt text and the OneDrive file ID and sharing URL. Excel exports include a clickable **Receipt Image** link. The selected OneDrive account must remain licensed and connected for those links to work.
+The app can save an optional receipt photo, either taken with a phone camera or selected from device files, to a central Zurich Finance Corporation work/school OneDrive account. Image bytes are uploaded to the OneDrive `Receipt Uploads` folder; Supabase stores only receipt text and the OneDrive file ID and sharing URL. Excel exports include a clickable **Receipt Image** link. The selected OneDrive account must remain licensed and connected for those links to work.
 
 1. In Microsoft Entra, register an app that supports **organizational directory accounts**. Your ZFC Microsoft 365 administrator may need to approve the app and its permissions.
 2. Add a **Web** redirect URI: `http://localhost:3000/api/onedrive/callback`. For production, register `https://YOUR_APP_HOST/api/onedrive/callback` and set `APP_URL=https://YOUR_APP_HOST`.
