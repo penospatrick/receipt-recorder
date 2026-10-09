@@ -186,7 +186,7 @@ test("login is required and user-group permissions isolate field-officer receipt
   assert.equal(deleteInUse.status, 400);
 });
 
-test("OneDrive connection uses organizational accounts and image uploads respect the Vercel-safe size limit", async () => {
+test("OneDrive connection uses organizational accounts and legacy image uploads remain size-limited", async () => {
   const status = await json(await fetch(`${baseUrl}/api/onedrive/status`, {
     headers: { cookie: adminCookie }
   }));
@@ -264,7 +264,7 @@ test("OneDrive connection uses organizational accounts and image uploads respect
     imageName: "large-receipt.jpg"
   }, officerCookie);
   assert.equal(response.status, 400);
-  assert.match((await response.json()).error, /3 MB or smaller/);
+  assert.match((await response.json()).error, /older app versions.*3 MB or smaller/);
 });
 
 test("custom field filters produce an Excel file with the matching records and columns", async () => {
@@ -368,14 +368,48 @@ test("custom field filters produce an Excel file with the matching records and c
   `).run("test-access-token", "test-refresh-token", Date.now() + 3600000, "admin@example.test");
   const originalFetch = global.fetch;
   const graphCalls = [];
+  const uploadSessions = new Map();
+  const chunkRanges = [];
+  const chunkSize = 2.5 * 1024 * 1024;
+  let completedFileSize = 0;
   global.fetch = async (input, options = {}) => {
     const url = String(input);
     if (!url.startsWith("https://graph.microsoft.com/v1.0/")) {
+      if (url.startsWith("https://contoso.up.1drv.com/")) {
+        if (options.method === "DELETE") return new Response(null, { status: 204 });
+        const contentRange = options.headers["Content-Range"];
+        chunkRanges.push(contentRange);
+        const [, startText, endText, totalText] = contentRange.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+        const total = Number(totalText);
+        const uploadedSize = Number(endText) - Number(startText) + 1;
+        if (Number(endText) === total - 1) {
+          completedFileSize = total;
+          return new Response(JSON.stringify({ id: "replacement-file-id" }), { status: 201 });
+        }
+        assert.equal(uploadedSize, Number(options.headers["Content-Length"]));
+        return new Response(JSON.stringify({ nextExpectedRanges: [`${Number(endText) + 1}-`] }), { status: 202 });
+      }
       return originalFetch(input, options);
     }
     graphCalls.push({ url, method: options.method || "GET" });
-    if ((options.method || "GET") === "PUT") {
-      return new Response(JSON.stringify({ id: "replacement-file-id" }), { status: 200 });
+    if (url.endsWith("/createUploadSession")) {
+      const fileName = decodeURIComponent(url.split("/createUploadSession")[0].split("/").at(-1).replace(/:$/, ""));
+      uploadSessions.set("https://contoso.up.1drv.com/session", fileName);
+      return new Response(JSON.stringify({
+        uploadUrl: "https://contoso.up.1drv.com/session",
+        expirationDateTime: new Date(Date.now() + 3600000).toISOString()
+      }), { status: 200 });
+    }
+    if (url.includes("/drive/items/replacement-file-id?")) {
+      return new Response(JSON.stringify({
+        id: "replacement-file-id",
+        name: uploadSessions.get("https://contoso.up.1drv.com/session"),
+        size: completedFileSize,
+        parentReference: { path: "/drive/root:/Receipt Uploads" }
+      }), { status: 200 });
+    }
+    if (url.endsWith("/Receipt%20Uploads")) {
+      return new Response(JSON.stringify({ id: "receipt-folder" }), { status: 200 });
     }
     if (url.endsWith("/createLink")) {
       return new Response(JSON.stringify({
@@ -386,20 +420,76 @@ test("custom field filters produce an Excel file with the matching records and c
     return new Response(null, { status: 200 });
   };
   try {
+    const maximumSize = 15 * 1024 * 1024;
+    const tooLarge = await post("/api/receipts/image-upload-sessions", {
+      name: "too-large.jpg",
+      type: "image/jpeg",
+      size: maximumSize + 1,
+      receiptId: imageReceipt.lastInsertRowid
+    }, adminCookie);
+    assert.equal(tooLarge.status, 400);
+
+    const maximumSessionResponse = await post("/api/receipts/image-upload-sessions", {
+      name: "maximum.jpg",
+      type: "image/jpeg",
+      size: maximumSize,
+      receiptId: imageReceipt.lastInsertRowid
+    }, adminCookie);
+    assert.equal(maximumSessionResponse.status, 201);
+    const maximumSession = await maximumSessionResponse.json();
+    assert.equal(maximumSession.chunkSize, chunkSize);
+    const cancelMaximum = await fetch(`${baseUrl}/api/receipts/image-upload-sessions`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({ uploadToken: maximumSession.uploadToken })
+    });
+    assert.equal(cancelMaximum.status, 200);
+
+    const replacementSize = maximumSession.chunkSize + 1;
+    const uploadSession = await json(await post("/api/receipts/image-upload-sessions", {
+      name: "replacement.jpg",
+      type: "image/jpeg",
+      size: replacementSize,
+      receiptId: imageReceipt.lastInsertRowid
+    }, adminCookie));
+    const firstChunk = Buffer.alloc(uploadSession.chunkSize, 1);
+    const finalChunk = Buffer.from([2]);
+    for (const [start, chunk] of [[0, firstChunk], [uploadSession.chunkSize, finalChunk]]) {
+      const end = start + chunk.length;
+      const chunkResponse = await fetch(`${baseUrl}/api/receipts/image-upload-chunks`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-range": `bytes ${start}-${end - 1}/${replacementSize}`,
+          "x-receipt-upload-token": uploadSession.uploadToken,
+          cookie: adminCookie
+        },
+        body: chunk
+      });
+      assert.equal(chunkResponse.status, 200);
+      const chunkResult = await chunkResponse.json();
+      assert.equal(chunkResult.complete, end === replacementSize);
+      if (end === replacementSize) assert.equal(chunkResult.fileId, "replacement-file-id");
+    }
+
     const replacedImage = await fetch(`${baseUrl}/api/receipts/${imageReceipt.lastInsertRowid}`, {
       method: "PUT",
       headers: { "content-type": "application/json", cookie: adminCookie },
       body: JSON.stringify({
         ...receiptUpdate,
-        imageData: "data:image/jpeg;base64,AA==",
-        imageName: "replacement.jpg"
+        imageUploadToken: uploadSession.uploadToken,
+        imageFileId: "replacement-file-id"
       })
     });
-    assert.equal(replacedImage.status, 200);
+    assert.equal(replacedImage.status, 200, await replacedImage.clone().text());
     assert.deepEqual(await replacedImage.json(), { updated: true, imageUpdated: true, warning: null });
   } finally {
     global.fetch = originalFetch;
   }
+  assert.deepEqual(chunkRanges, [
+    `bytes 0-${chunkSize - 1}/${chunkSize + 1}`,
+    `bytes ${chunkSize}-${chunkSize}/${chunkSize + 1}`
+  ]);
   assert.ok(graphCalls.some((call) => call.url.endsWith("/test-file-id") && call.method === "DELETE"));
   const savedReplacement = await server.database.prepare(
     "SELECT image_url, onedrive_file_id FROM receipts WHERE si_or_number = ?"

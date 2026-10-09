@@ -321,11 +321,66 @@ async function deleteReceipt(receipt) {
   }
 }
 
+async function uploadReceiptImageFile(file, receiptId, onProgress) {
+  const maxBytes = 15 * 1024 * 1024;
+  if (file.size > maxBytes) throw new Error("Receipt images must be 15 MB or smaller.");
+  if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
+    throw new Error("Choose a JPG, PNG, WebP, or GIF image.");
+  }
+  const session = await api("/api/receipts/image-upload-sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      receiptId
+    })
+  });
+  let fileId = null;
+  try {
+    for (let start = 0; start < file.size; start += session.chunkSize) {
+      const end = Math.min(start + session.chunkSize, file.size);
+      const result = await api("/api/receipts/image-upload-chunks", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-Receipt-Upload-Token": session.uploadToken,
+          "Content-Range": `bytes ${start}-${end - 1}/${file.size}`
+        },
+        body: file.slice(start, end)
+      });
+      const isLastChunk = end === file.size;
+      if (isLastChunk && (!result.complete || !result.fileId)) {
+        throw new Error("OneDrive did not finish saving the image. Please try again.");
+      }
+      if (!isLastChunk && result.complete) {
+        throw new Error("OneDrive finished the image upload unexpectedly. Please try again.");
+      }
+      if (isLastChunk) fileId = result.fileId;
+      onProgress(Math.round(end / file.size * 100));
+    }
+    return { imageUploadToken: session.uploadToken, imageFileId: fileId };
+  } catch (error) {
+    try {
+      await api("/api/receipts/image-upload-sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uploadToken: session.uploadToken, fileId })
+      });
+    } catch (cleanupError) {
+      throw new Error(`${error.message} The incomplete image upload could not be cleaned up: ${cleanupError.message}`);
+    }
+    throw error;
+  }
+}
+
 receiptForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = document.querySelector("#save-button");
   const editingId = appState.editingReceiptId;
   const editingHasImage = appState.editingReceiptHasImage;
+  let pendingImageUpload = null;
   button.disabled = true;
   button.textContent = editingId ? "Updating receipt…" : "Saving receipt…";
   showMessage(formMessage, "");
@@ -333,21 +388,17 @@ receiptForm.addEventListener("submit", async (event) => {
     const payload = collectReceiptPayload();
     if (receiptImageInput.files?.[0]) {
       const file = receiptImageInput.files[0];
-      if (file.size > 3 * 1024 * 1024) throw new Error("Receipt images must be 3 MB or smaller.");
-      if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) throw new Error("Choose a JPG, PNG, WebP, or GIF image.");
-      payload.imageData = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error("Could not read the selected image."));
-        reader.readAsDataURL(file);
+      pendingImageUpload = await uploadReceiptImageFile(file, editingId, (percent) => {
+        button.textContent = `Uploading image (${percent}%)…`;
       });
-      payload.imageName = file.name;
+      Object.assign(payload, pendingImageUpload);
     }
     const result = await api(editingId ? `/api/receipts/${editingId}` : "/api/receipts", {
       method: editingId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+    pendingImageUpload = null;
     receiptForm.reset();
     dateInput.value = localDateString();
     renderReceiptFields();
@@ -364,7 +415,19 @@ receiptForm.addEventListener("submit", async (event) => {
     );
     await loadReceipts(userHas("receipts:export"));
   } catch (error) {
-    showMessage(formMessage, error.message, true);
+    let message = error.message;
+    if (pendingImageUpload) {
+      try {
+        await api("/api/receipts/image-upload-sessions", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pendingImageUpload)
+        });
+      } catch (cleanupError) {
+        message += ` The uploaded image could not be cleaned up: ${cleanupError.message}`;
+      }
+    }
+    showMessage(formMessage, message, true);
     if (error.message === "Sign in to continue.") {
       setAuthenticated(null);
     }

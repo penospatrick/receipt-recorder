@@ -72,7 +72,7 @@ The app can save an optional receipt photo, either taken with a phone camera or 
 3. Add Microsoft Graph **Delegated** permissions `User.Read` and `Files.ReadWrite`. The app requests `offline_access`.
 4. Set `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` as server environment variables only.
 5. Sign in as System Admin, open **Manage your workspace → OneDrive**, and click **Connect OneDrive** using the corporate account that should own the receipt images. To change the connected account later, click **Switch OneDrive account** and choose the replacement account in Microsoft's account picker. New receipt photos will be stored in the selected account; existing photos remain in the account that originally stored them.
-6. Staff with receipt-create permission can attach an image when creating a receipt. Images are limited to 3 MB so uploads fit Vercel's function request-size limit.
+6. Staff with receipt-create permission can attach an image when creating a receipt. Images are limited to 15 MB and uploaded to OneDrive in 2.5 MiB chunks so each request stays within Vercel's function request-size limit.
 7. The app requests a Microsoft Graph anonymous view link so the receipt image can be opened by anyone who has the URL, including from the Excel report. This can expose sensitive receipt details. ZFC's Microsoft 365 administrator must allow **Anyone** links for OneDrive; if the tenant blocks them, the app reports the error and does not silently create a restricted link.
 
 Database initialization creates the OneDrive token table and adds image-reference columns to existing receipt tables automatically. Receipt images are not stored in Supabase.
