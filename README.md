@@ -54,6 +54,8 @@ Administrators can create multiple accounts from **Create users in bulk** by dow
 
 In **Custom fields**, administrators can add text, number, date, or dropdown fields and mark them required. They appear on the receipt form and as additional Excel columns. Archiving a field keeps its existing receipt values for history and export.
 
+Users with permission to edit a receipt can replace its attached OneDrive photo while editing. Choose a replacement image before saving; leaving the image picker empty keeps the current photo. The app removes the replaced file from OneDrive after the receipt is updated.
+
 Excel filters include a date range, amount bounds, user group, entering user, and any active custom fields. Select a user group to limit the **Entered by** list to active users in that group. Use **Preview matching receipts** to check the filtered set before downloading. The server applies the selected filters to the workbook and enforces the signed-in user's data permissions.
 
 ## Access
@@ -63,13 +65,14 @@ The bootstrap admin account is created only on the first startup when its userna
 
 ## Optional OneDrive receipt images
 
-The app can save an optional receipt photo (the mobile picker may open the camera) to a central personal OneDrive. Receipt details and the OneDrive web URL/file ID are stored with each receipt.
+The app can save an optional receipt photo (the mobile picker may open the camera) to a central Zurich Finance Corporation work/school OneDrive account. Image bytes are uploaded to the OneDrive `Receipt Uploads` folder; Supabase stores only receipt text and the OneDrive file ID and sharing URL. Excel exports include a clickable **Receipt Image** link. The selected OneDrive account must remain licensed and connected for those links to work.
 
-1. In Microsoft Entra, allow personal Microsoft accounts in the app registration.
+1. In Microsoft Entra, register an app that supports **organizational directory accounts**. Your ZFC Microsoft 365 administrator may need to approve the app and its permissions.
 2. Add a **Web** redirect URI: `http://localhost:3000/api/onedrive/callback`. For production, register `https://YOUR_APP_HOST/api/onedrive/callback` and set `APP_URL=https://YOUR_APP_HOST`.
 3. Add Microsoft Graph **Delegated** permissions `User.Read` and `Files.ReadWrite`. The app requests `offline_access`.
 4. Set `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` as server environment variables only.
-5. Sign in as System Admin and click **Connect OneDrive**. The central refresh token is stored server-side in the app database.
-6. Staff with receipt-create permission can attach an image while creating a receipt. Images are limited to 8 MB and preview through an authenticated route; no anonymous public sharing link is created.
+5. Sign in as System Admin, open **Manage your workspace → OneDrive**, and click **Connect OneDrive** using the corporate account that should own the receipt images. To change the connected account later, click **Switch OneDrive account** and choose the replacement account in Microsoft's account picker. New receipt photos will be stored in the selected account; existing photos remain in the account that originally stored them.
+6. Staff with receipt-create permission can attach an image when creating a receipt. Images are limited to 3 MB so uploads fit Vercel's function request-size limit.
+7. The app requests a Microsoft Graph anonymous view link so the receipt image can be opened by anyone who has the URL, including from the Excel report. This can expose sensitive receipt details. ZFC's Microsoft 365 administrator must allow **Anyone** links for OneDrive; if the tenant blocks them, the app reports the error and does not silently create a restricted link.
 
-Database initialization creates the OneDrive token table and adds image-reference columns to existing receipt tables automatically.
+Database initialization creates the OneDrive token table and adds image-reference columns to existing receipt tables automatically. Receipt images are not stored in Supabase.

@@ -14,6 +14,8 @@ process.env.PORT = "0";
 process.env.SUPABASE_DB_URL = "";
 process.env.DATABASE_URL = "";
 process.env.SUPABASE_URL = "https://receipt-recorder-test.supabase.co";
+process.env.MICROSOFT_CLIENT_ID = "receipt-recorder-test-client";
+process.env.MICROSOFT_CLIENT_SECRET = "receipt-recorder-test-secret";
 
 const { after, before, test } = require("node:test");
 const server = require("../app-server");
@@ -184,6 +186,87 @@ test("login is required and user-group permissions isolate field-officer receipt
   assert.equal(deleteInUse.status, 400);
 });
 
+test("OneDrive connection uses organizational accounts and image uploads respect the Vercel-safe size limit", async () => {
+  const status = await json(await fetch(`${baseUrl}/api/onedrive/status`, {
+    headers: { cookie: adminCookie }
+  }));
+  assert.equal(status.configured, true);
+  assert.equal(status.connected, false);
+  assert.equal(status.accountEmail, null);
+
+  const deniedStatus = await fetch(`${baseUrl}/api/onedrive/status`, {
+    headers: { cookie: officerCookie }
+  });
+  assert.equal(deniedStatus.status, 403);
+
+  const connection = await fetch(`${baseUrl}/api/onedrive/connect`, {
+    headers: { cookie: adminCookie },
+    redirect: "manual"
+  });
+  assert.equal(connection.status, 302);
+  const loginUrl = new URL(connection.headers.get("location"));
+  assert.equal(loginUrl.origin, "https://login.microsoftonline.com");
+  assert.match(loginUrl.pathname, /\/organizations\/oauth2\/v2\.0\/authorize$/);
+  assert.equal(loginUrl.searchParams.get("prompt"), "select_account");
+
+  const state = loginUrl.searchParams.get("state");
+  await server.database.prepare(`
+    INSERT INTO onedrive_auth (id, access_token, refresh_token, expires_at, account_email)
+    VALUES (1, ?, ?, ?, ?)
+  `).run("previous-access-token", "previous-refresh-token", Date.now() + 3600000, "previous@example.test");
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = async (url, options) => {
+      if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+      if (String(url).endsWith("/token")) {
+        return new Response(JSON.stringify({
+          access_token: "replacement-access-token",
+          refresh_token: "replacement-refresh-token",
+          expires_in: 3600
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (String(url).startsWith("https://graph.microsoft.com/v1.0/me?")) {
+        return new Response(JSON.stringify({
+          mail: "replacement@example.test",
+          userPrincipalName: "replacement@example.test"
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`Unexpected request while switching OneDrive account: ${url}`);
+    };
+    const callback = await fetch(`${baseUrl}/api/onedrive/callback?code=replacement-code&state=${state}`, {
+      headers: { cookie: `onedrive_oauth_state=${state}` },
+      redirect: "manual"
+    });
+    assert.equal(callback.status, 302);
+    assert.equal(callback.headers.get("location"), "/?onedrive=connected");
+    const replacement = await server.database.prepare(
+      "SELECT access_token, refresh_token, account_email FROM onedrive_auth WHERE id = 1"
+    ).get();
+    assert.deepEqual(replacement, {
+      access_token: "replacement-access-token",
+      refresh_token: "replacement-refresh-token",
+      account_email: "replacement@example.test"
+    });
+  } finally {
+    global.fetch = originalFetch;
+    await server.database.prepare("DELETE FROM onedrive_auth WHERE id = 1").run();
+  }
+
+  const imageBytes = 3 * 1024 * 1024 + 1;
+  const oversizedImage = `data:image/jpeg;base64,${"A".repeat(4 * Math.ceil(imageBytes / 3))}`;
+  const response = await post("/api/receipts", {
+    date: "2026-10-09",
+    siOrNumber: "IMAGE-TOO-LARGE",
+    particulars: "Oversized receipt photo",
+    amount: 12,
+    customValues: { [customFieldId]: "Finance" },
+    imageData: oversizedImage,
+    imageName: "large-receipt.jpg"
+  }, officerCookie);
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /3 MB or smaller/);
+});
+
 test("custom field filters produce an Excel file with the matching records and columns", async () => {
   const unauthenticated = await fetch(`${baseUrl}/api/receipts/export.xlsx`);
   assert.equal(unauthenticated.status, 401);
@@ -229,6 +312,100 @@ test("custom field filters produce an Excel file with the matching records and c
   const emptyWorkbook = new ExcelJS.Workbook();
   await emptyWorkbook.xlsx.load(Buffer.from(await emptyFilter.arrayBuffer()));
   assert.equal(emptyWorkbook.getWorksheet("Receipts").getRow(2).getCell(2).value, null);
+
+  const imageReceipt = await server.database.prepare(`
+    INSERT INTO receipts (
+      receipt_date, si_or_number, particulars, amount_cents, custom_values,
+      created_by, created_by_name, image_url, onedrive_file_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "2026-10-09",
+    "IMAGE-001",
+    "Receipt with OneDrive image",
+    5000,
+    "{}",
+    aliceId,
+    "Alice Officer",
+    "https://1drv.ms/i/s!public-receipt-link",
+    "test-file-id"
+  );
+  const imageExport = await fetch(`${baseUrl}/api/receipts/export.xlsx?siOrNumber=IMAGE-001`, {
+    headers: { cookie: accountingCookie }
+  });
+  assert.equal(imageExport.status, 200);
+  const imageWorkbook = new ExcelJS.Workbook();
+  await imageWorkbook.xlsx.load(Buffer.from(await imageExport.arrayBuffer()));
+  const imageSheet = imageWorkbook.getWorksheet("Receipts");
+  assert.equal(imageSheet.getRow(1).getCell(7).value, "Receipt Image");
+  assert.deepEqual(imageSheet.getRow(2).getCell(7).value, {
+    text: "Open receipt image",
+    hyperlink: "https://1drv.ms/i/s!public-receipt-link"
+  });
+
+  const receiptUpdate = {
+    date: "2026-10-09",
+    siOrNumber: "IMAGE-001",
+    particulars: "Receipt with OneDrive image",
+    amount: 50,
+    customValues: { [customFieldId]: "Finance" }
+  };
+  const unchangedImage = await fetch(`${baseUrl}/api/receipts/${imageReceipt.lastInsertRowid}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify(receiptUpdate)
+  });
+  assert.equal(unchangedImage.status, 200);
+  assert.equal((await unchangedImage.json()).imageUpdated, false);
+  const originalImage = await server.database.prepare(
+    "SELECT image_url, onedrive_file_id FROM receipts WHERE si_or_number = ?"
+  ).get("IMAGE-001");
+  assert.equal(originalImage.image_url, "https://1drv.ms/i/s!public-receipt-link");
+  assert.equal(originalImage.onedrive_file_id, "test-file-id");
+
+  await server.database.prepare(`
+    INSERT INTO onedrive_auth (id, access_token, refresh_token, expires_at, account_email)
+    VALUES (1, ?, ?, ?, ?)
+  `).run("test-access-token", "test-refresh-token", Date.now() + 3600000, "admin@example.test");
+  const originalFetch = global.fetch;
+  const graphCalls = [];
+  global.fetch = async (input, options = {}) => {
+    const url = String(input);
+    if (!url.startsWith("https://graph.microsoft.com/v1.0/")) {
+      return originalFetch(input, options);
+    }
+    graphCalls.push({ url, method: options.method || "GET" });
+    if ((options.method || "GET") === "PUT") {
+      return new Response(JSON.stringify({ id: "replacement-file-id" }), { status: 200 });
+    }
+    if (url.endsWith("/createLink")) {
+      return new Response(JSON.stringify({
+        link: { webUrl: "https://1drv.ms/i/s!replacement-link" }
+      }), { status: 200 });
+    }
+    if ((options.method || "GET") === "DELETE") return new Response(null, { status: 204 });
+    return new Response(null, { status: 200 });
+  };
+  try {
+    const replacedImage = await fetch(`${baseUrl}/api/receipts/${imageReceipt.lastInsertRowid}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({
+        ...receiptUpdate,
+        imageData: "data:image/jpeg;base64,AA==",
+        imageName: "replacement.jpg"
+      })
+    });
+    assert.equal(replacedImage.status, 200);
+    assert.deepEqual(await replacedImage.json(), { updated: true, imageUpdated: true, warning: null });
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.ok(graphCalls.some((call) => call.url.endsWith("/test-file-id") && call.method === "DELETE"));
+  const savedReplacement = await server.database.prepare(
+    "SELECT image_url, onedrive_file_id FROM receipts WHERE si_or_number = ?"
+  ).get("IMAGE-001");
+  assert.equal(savedReplacement.image_url, "https://1drv.ms/i/s!replacement-link");
+  assert.equal(savedReplacement.onedrive_file_id, "replacement-file-id");
 });
 
 test("administrators cannot remove their last active administrator access", async () => {

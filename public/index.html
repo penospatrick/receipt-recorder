@@ -44,8 +44,6 @@
             <div>
               <p class="eyebrow" id="receipt-form-eyebrow">NEW ENTRY</p>
               <h2 id="receipt-form-heading">Record a receipt</h2>
-              <p id="onedrive-status" class="receipt-owner" aria-live="polite">Receipt images can be saved to OneDrive.</p>
-              <button class="text-button" id="onedrive-connect-button" type="button" hidden>Connect OneDrive</button>
             </div>
             <span class="heading-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -66,9 +64,10 @@
               <span aria-hidden="true">₱</span>
               <input id="amount" name="amount" type="number" min="0.01" max="1000000000" step="0.01" inputmode="decimal" placeholder="0.00" required>
             </div>
-            <label for="receipt-image">Receipt image (optional)</label>
+            <label for="receipt-image" id="receipt-image-label">Receipt image (optional)</label>
             <input id="receipt-image" name="receiptImage" type="file" accept="image/*" capture="environment">
-            <p class="receipt-owner">On phones, this can open your camera. JPG, PNG, WebP, or GIF; maximum 8 MB.</p>
+            <p class="receipt-owner">On phones, this can open your camera. JPG, PNG, WebP, or GIF; maximum 3 MB.</p>
+            <p class="receipt-owner" id="receipt-image-current" hidden></p>
             <div id="custom-inputs"></div>
             <button class="primary-button" id="save-button" type="submit">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -154,6 +153,29 @@
               <span class="admin-module-description">Configure extra information collected on each receipt.</span>
               <span class="admin-module-link">Open custom fields <span aria-hidden="true">→</span></span>
             </button>
+            <button class="admin-module-card" data-admin-open="onedrive" type="button">
+              <span class="admin-module-icon" aria-hidden="true">04</span>
+              <span class="admin-module-title">OneDrive</span>
+              <span class="admin-module-description">Connect the corporate account used to store receipt photos.</span>
+              <span class="admin-module-link">Manage OneDrive <span aria-hidden="true">→</span></span>
+            </button>
+          </section>
+          <section class="admin-pane" id="admin-onedrive-pane" data-admin-module="onedrive" hidden>
+            <div class="admin-module-header">
+              <button class="admin-back-button" data-admin-home type="button"><span aria-hidden="true">←</span> All admin modules</button>
+              <div class="admin-section-heading">
+                <div>
+                  <h3>OneDrive receipt photos</h3>
+                  <p>Connect the ZFC work or school OneDrive account where receipt photos should be stored.</p>
+                </div>
+              </div>
+            </div>
+            <div class="onedrive-connection-card">
+              <p class="eyebrow">CONNECTION STATUS</p>
+              <p id="onedrive-status" class="onedrive-status" role="status" aria-live="polite">Checking OneDrive connection…</p>
+              <p class="onedrive-help">Photos are stored in OneDrive, while receipt details and the sharing link are stored in the app database. Switching accounts makes the selected account the active storage account; existing photos remain in the previous account. Anonymous image links can be opened by anyone who has the link and require approval under your Microsoft 365 policy.</p>
+              <button class="primary-button compact-button" id="onedrive-connect-button" type="button">Connect OneDrive</button>
+            </div>
           </section>
           <section class="admin-pane" id="admin-users-pane" data-admin-module="users" hidden>
             <div class="admin-module-header">
