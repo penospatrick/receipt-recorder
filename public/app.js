@@ -24,6 +24,7 @@ const dateFormatter = new Intl.DateTimeFormat("en-PH", {
 const appState = {
   user: null,
   fields: [],
+  particulars: [],
   groups: [],
   users: [],
   permissions: [],
@@ -77,7 +78,7 @@ function setAuthenticated(user) {
     ? `${user.displayName} · ${user.groupName} (click to sign out)`
     : "Sign in to Zurich Finance Corporation";
   document.querySelector(".dashboard").hidden = !user;
-  const hasAdministration = user && ["users:manage", "groups:manage", "fields:manage"].some(userHas);
+  const hasAdministration = user && ["users:manage", "groups:manage", "fields:manage", "particulars:manage"].some(userHas);
   adminPanel.hidden = !hasAdministration;
   document.querySelector(".entry-card").hidden = !userHas("receipts:create");
   exportPanel.hidden = !userHas("receipts:export");
@@ -168,7 +169,8 @@ function collectReceiptPayload() {
   return {
     date: data.get("date"),
     siOrNumber: data.get("siOrNumber"),
-    particulars: data.get("particulars"),
+    particularsCategory: data.get("particularsCategory"),
+    particularsDetail: data.get("particularsDetail"),
     amount: Number(data.get("amount")),
     customValues
   };
@@ -266,6 +268,31 @@ function buildFilterQuery() {
   return params;
 }
 
+function renderParticularsSelect(selectedValue = "") {
+  const select = document.querySelector("#particulars");
+  fillSelect(
+    select,
+    appState.particulars.map((item) => ({ label: item.label, value: item.label })),
+    "Choose a category…"
+  );
+  if (selectedValue && !appState.particulars.some((item) => item.label === selectedValue)) {
+    const legacyOption = makeElement("option", "", `${selectedValue} (hidden)`);
+    legacyOption.value = selectedValue;
+    select.append(legacyOption);
+  }
+  select.value = selectedValue;
+  updateParticularsDetailVisibility();
+}
+
+function updateParticularsDetailVisibility() {
+  const isOthers = document.querySelector("#particulars").value.toLowerCase() === "others";
+  const detailWrap = document.querySelector("#particulars-detail-wrap");
+  detailWrap.hidden = !isOthers;
+  document.querySelector("#particulars-detail").required = isOthers;
+}
+
+document.querySelector("#particulars").addEventListener("change", updateParticularsDetailVisibility);
+
 async function loadReceipts(useExportFilters = false) {
   if (!appState.user) return;
   receiptList.replaceChildren(makeElement("div", "loading-state", "Loading your register…"));
@@ -303,7 +330,10 @@ function setReceiptEditing(receipt = null) {
 function editReceipt(receipt) {
   receiptForm.elements.date.value = receipt.date;
   receiptForm.elements.siOrNumber.value = receipt.siOrNumber;
-  receiptForm.elements.particulars.value = receipt.particulars;
+  const category = receipt.particularsCategory || "Others";
+  renderParticularsSelect(category);
+  document.querySelector("#particulars-detail").value = receipt.particularsDetail ||
+    (receipt.particularsCategory ? "" : receipt.particulars);
   receiptForm.elements.amount.value = receipt.amount.toFixed(2);
   renderReceiptFields(receipt.customValues || {});
   setReceiptEditing(receipt);
@@ -401,6 +431,8 @@ receiptForm.addEventListener("submit", async (event) => {
     pendingImageUpload = null;
     receiptForm.reset();
     dateInput.value = localDateString();
+    renderParticularsSelect();
+    document.querySelector("#particulars-detail").value = "";
     renderReceiptFields();
     setReceiptEditing();
     showMessage(
@@ -442,6 +474,8 @@ receiptForm.addEventListener("submit", async (event) => {
 document.querySelector("#receipt-cancel-edit").addEventListener("click", () => {
   receiptForm.reset();
   dateInput.value = localDateString();
+  renderParticularsSelect();
+  document.querySelector("#particulars-detail").value = "";
   renderReceiptFields();
   setReceiptEditing();
   showMessage(formMessage, "");
@@ -515,6 +549,13 @@ function renderExportFilters() {
   fillSelect(groupSelect, groupOptions, "All groups");
   if (groupOptions.some((group) => String(group.value) === selectedGroup)) groupSelect.value = selectedGroup;
   updateEnteredByOptions();
+  const particularsSelect = document.querySelector("#filter-particular-category");
+  const selectedParticular = particularsSelect.value;
+  const particularsOptions = appState.particulars.map((item) => ({ label: item.label, value: item.label }));
+  fillSelect(particularsSelect, particularsOptions, "All particulars");
+  if (particularsOptions.some((item) => item.value === selectedParticular)) {
+    particularsSelect.value = selectedParticular;
+  }
   document.querySelector("#filter-group-wrap").hidden = !userHas("receipts:read_all");
   document.querySelector("#filter-user-wrap").hidden = !userHas("receipts:read_all");
   const container = document.querySelector("#custom-filters");
@@ -552,6 +593,9 @@ function updateEnteredByOptions() {
 document.querySelector("#filter-group").addEventListener("change", updateEnteredByOptions);
 
 async function loadWorkspaceData() {
+  const particularsResponse = await api("/api/particulars");
+  appState.particulars = particularsResponse.particulars;
+  renderParticularsSelect();
   const { fields } = await api("/api/fields");
   appState.fields = fields;
   renderReceiptFields();
@@ -575,6 +619,7 @@ async function loadWorkspaceData() {
   if (userHas("users:manage")) adminRequests.push(loadUsers());
   if (userHas("groups:manage")) adminRequests.push(loadGroups());
   if (userHas("fields:manage")) adminRequests.push(loadAdminFields());
+  if (userHas("particulars:manage")) adminRequests.push(loadAdminParticulars());
   await Promise.all(adminRequests);
 }
 
@@ -647,6 +692,7 @@ function showAdminPanes() {
   if (userHas("users:manage")) visibleModules.push("users");
   if (userHas("groups:manage")) visibleModules.push("groups");
   if (userHas("fields:manage")) visibleModules.push("fields");
+  if (userHas("particulars:manage")) visibleModules.push("particulars");
   if (userHas("users:manage")) visibleModules.push("onedrive");
   if (appState.adminModule && !visibleModules.includes(appState.adminModule)) appState.adminModule = null;
   document.querySelector("#admin-module-home").hidden = Boolean(appState.adminModule);
@@ -655,6 +701,13 @@ function showAdminPanes() {
   }
   for (const pane of document.querySelectorAll(".admin-pane")) {
     pane.hidden = pane.dataset.adminModule !== appState.adminModule;
+  }
+  for (const button of document.querySelectorAll(".admin-sidebar-link")) {
+    const isCurrent = button.dataset.adminOpen === appState.adminModule ||
+      (!button.dataset.adminOpen && !appState.adminModule);
+    button.classList.toggle("is-active", isCurrent);
+    if (isCurrent) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   }
 }
 
@@ -1040,6 +1093,74 @@ async function deleteUser(user) {
     showMessage(document.querySelector("#user-message"), error.message, true);
   }
 }
+
+async function refreshParticularsOptions() {
+  const { particulars } = await api("/api/particulars");
+  appState.particulars = particulars;
+  const selected = document.querySelector("#particulars").value;
+  const activeSelection = particulars.some((item) => item.label === selected) ? selected : "";
+  renderParticularsSelect(activeSelection);
+  renderExportFilters();
+}
+
+async function loadAdminParticulars() {
+  const { particulars } = await api("/api/admin/particulars");
+  const bodyElement = document.querySelector("#particulars-table-body");
+  bodyElement.replaceChildren();
+  for (const item of particulars) {
+    const row = makeElement("tr", item.active ? "" : "field-row-archived");
+    row.append(makeElement("td", "", item.label));
+    const status = makeElement("td");
+    status.append(makeElement(
+      "span",
+      `status-badge${item.active ? "" : " inactive"}`,
+      item.active ? "Active" : "Hidden"
+    ));
+    row.append(status);
+    const actionCell = makeElement("td");
+    const toggle = makeElement("button", "table-action", item.active ? "Hide" : "Show");
+    toggle.type = "button";
+    toggle.addEventListener("click", async () => {
+      toggle.disabled = true;
+      try {
+        await api(`/api/admin/particulars/${item.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: !item.active })
+        });
+        await Promise.all([loadAdminParticulars(), refreshParticularsOptions()]);
+      } catch (error) {
+        showMessage(document.querySelector("#particulars-message"), error.message, true);
+        toggle.disabled = false;
+      }
+    });
+    actionCell.append(toggle);
+    row.append(actionCell);
+    bodyElement.append(row);
+  }
+}
+
+document.querySelector("#particulars-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.querySelector("#particular-option-label");
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  showMessage(document.querySelector("#particulars-message"), "");
+  try {
+    await api("/api/admin/particulars", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: input.value })
+    });
+    input.value = "";
+    await Promise.all([loadAdminParticulars(), refreshParticularsOptions()]);
+    showMessage(document.querySelector("#particulars-message"), "Particulars choice added.");
+  } catch (error) {
+    showMessage(document.querySelector("#particulars-message"), error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 async function loadAdminFields() {
   const { fields } = await api("/api/admin/fields");

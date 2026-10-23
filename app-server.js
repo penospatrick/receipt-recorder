@@ -27,7 +27,8 @@ const permissions = [
   { key: "receipts:export", label: "Export receipts to Excel" },
   { key: "users:manage", label: "Manage user accounts" },
   { key: "groups:manage", label: "Manage user groups and permissions" },
-  { key: "fields:manage", label: "Manage custom receipt fields" }
+  { key: "fields:manage", label: "Manage custom receipt fields" },
+  { key: "particulars:manage", label: "Manage receipt particulars" }
 ];
 const validPermissionKeys = new Set(permissions.map((permission) => permission.key));
 
@@ -88,6 +89,12 @@ function findUserById(userId) {
 
 async function initializeStorage() {
   await database.initialize();
+  for (const [sortOrder, label] of ["Repairs", "Meals", "Registration", "Others"].entries()) {
+    await database.prepare(`
+      INSERT OR IGNORE INTO receipt_particulars (label, sort_order)
+      VALUES (?, ?)
+    `).run(label, sortOrder);
+  }
   for (const group of defaultGroups) {
     await database.prepare(`
       INSERT OR IGNORE INTO groups (name, description, permissions_json, is_system)
@@ -99,7 +106,15 @@ async function initializeStorage() {
       is_system: group.isSystem ? 1 : 0
     });
   }
-  const adminGroup = await database.prepare("SELECT id FROM groups WHERE name = 'System Admin'").get();
+  const adminGroup = await database.prepare(
+    "SELECT id, permissions_json FROM groups WHERE name = 'System Admin'"
+  ).get();
+  const adminPermissions = JSON.parse(adminGroup.permissions_json);
+  if (!adminPermissions.includes("particulars:manage")) {
+    adminPermissions.push("particulars:manage");
+    await database.prepare("UPDATE groups SET permissions_json = ? WHERE id = ?")
+      .run(JSON.stringify(adminPermissions), adminGroup.id);
+  }
   if (!await database.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE").get(bootstrapUsername)) {
     const password = hashPassword(bootstrapPassword);
     await database.prepare(`
@@ -533,6 +548,40 @@ function escapeExcelText(value) {
   return typeof value === "string" && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
 }
 
+async function validateParticularsInput(body, existingCategory = "") {
+  if (body?.particularsCategory === undefined) {
+    const particulars = body?.particulars;
+    if (typeof particulars !== "string" || !particulars.trim() || particulars.trim().length > 1000) {
+      return { error: "Particulars are required and must be 1,000 characters or fewer." };
+    }
+    return { category: "", detail: "", particulars: particulars.trim() };
+  }
+
+  const requestedCategory = body.particularsCategory;
+  if (typeof requestedCategory !== "string" || !requestedCategory.trim() || requestedCategory.trim().length > 60) {
+    return { error: "Choose a valid particulars category." };
+  }
+  const category = await database.prepare(`
+    SELECT label, active FROM receipt_particulars
+    WHERE label = ? COLLATE NOCASE
+  `).get(requestedCategory.trim());
+  if (!category || (!category.active && category.label.toLowerCase() !== existingCategory.toLowerCase())) {
+    return { error: "Choose an active particulars category." };
+  }
+
+  const detail = category.label.toLowerCase() === "others"
+    ? typeof body.particularsDetail === "string" ? body.particularsDetail.trim() : ""
+    : "";
+  if (category.label.toLowerCase() === "others" && (!detail || detail.length > 1000)) {
+    return { error: "Enter particulars for Others (1,000 characters or fewer)." };
+  }
+  const particulars = detail ? `${category.label}: ${detail}` : category.label;
+  if (particulars.length > 1000) {
+    return { error: "Particulars are required and must be 1,000 characters or fewer." };
+  }
+  return { category: category.label, detail, particulars };
+}
+
 function getFilters(request, fields, response) {
   const range = readDateRange(request, response);
   if (!range) return null;
@@ -548,6 +597,16 @@ function getFilters(request, fields, response) {
       values[parameter] = `%${escapeLike(queryValue.trim())}%`;
       clauses.push(`${column} LIKE @${parameter} ESCAPE char(92) COLLATE NOCASE`);
     }
+  }
+
+  const particularCategory = request.query.particularCategory;
+  if (particularCategory !== undefined && particularCategory !== "") {
+    if (typeof particularCategory !== "string" || particularCategory.trim().length > 60) {
+      response.status(400).json({ error: "Select a valid particulars category." });
+      return null;
+    }
+    values.filter_particular_category = particularCategory.trim();
+    clauses.push("r.particulars_category = @filter_particular_category");
   }
 
   const amountMin = request.query.amountMin;
@@ -643,7 +702,7 @@ async function getReceiptRows(filters) {
   const where = filters.clauses.length ? `WHERE ${filters.clauses.join(" AND ")}` : "";
   return database.prepare(`
     SELECT r.id, CAST(r.receipt_date AS TEXT) AS receipt_date,
-      r.si_or_number, r.particulars, r.amount_cents,
+      r.si_or_number, r.particulars, r.particulars_category, r.particulars_detail, r.amount_cents,
       r.custom_values, r.created_by, r.created_at, r.image_url, r.onedrive_file_id,
       COALESCE(u.display_name, r.created_by_name) AS creator_name
     FROM receipts r
@@ -1014,6 +1073,17 @@ app.get("/api/users/directory", requirePermission("receipts:read_all"), async (_
 });
 
 app.get("/api/fields", requireAuth, async (_request, response) => response.json({ fields: await visibleFields() }));
+app.get("/api/particulars", requireAuth, async (_request, response) => {
+  const particulars = await database.prepare(`
+    SELECT id, label, active, sort_order
+    FROM receipt_particulars WHERE active = 1 ORDER BY sort_order, id
+  `).all();
+  response.json({ particulars: particulars.map((item) => ({
+    id: item.id,
+    label: item.label,
+    sortOrder: item.sort_order
+  })) });
+});
 
 app.get("/api/receipts", requireAuth, async (request, response) => {
   const filters = getFilters(request, await visibleFields(), response);
@@ -1023,6 +1093,8 @@ app.get("/api/receipts", requireAuth, async (request, response) => {
     date: row.receipt_date,
     siOrNumber: row.si_or_number,
     particulars: row.particulars,
+    particularsCategory: row.particulars_category,
+    particularsDetail: row.particulars_detail,
     amount: row.amount_cents / 100,
     customValues: JSON.parse(row.custom_values),
     imageUrl: row.image_url,
@@ -1037,15 +1109,14 @@ app.get("/api/receipts", requireAuth, async (request, response) => {
 });
 
 app.post("/api/receipts", requirePermission("receipts:create"), async (request, response) => {
-  const { date, siOrNumber, particulars, amount } = request.body || {};
+  const { date, siOrNumber, amount } = request.body || {};
   const amountNumber = typeof amount === "number" ? amount : Number(amount);
   if (!validDate(date)) return response.status(400).json({ error: "Enter a valid receipt date." });
   if (typeof siOrNumber !== "string" || !siOrNumber.trim() || siOrNumber.trim().length > 80) {
     return response.status(400).json({ error: "SI/OR number is required and must be 80 characters or fewer." });
   }
-  if (typeof particulars !== "string" || !particulars.trim() || particulars.trim().length > 1000) {
-    return response.status(400).json({ error: "Particulars are required and must be 1,000 characters or fewer." });
-  }
+  const particularsResult = await validateParticularsInput(request.body);
+  if (particularsResult.error) return response.status(400).json({ error: particularsResult.error });
   if (!Number.isFinite(amountNumber) || amountNumber <= 0 || amountNumber > 1000000000) {
     return response.status(400).json({ error: "Amount must be greater than zero and no more than 1,000,000,000." });
   }
@@ -1062,10 +1133,11 @@ app.post("/api/receipts", requirePermission("receipts:create"), async (request, 
       uploadedImage = await uploadReceiptImage(request.body.imageData, request.body.imageName);
     }
     const result = await database.prepare(`
-      INSERT INTO receipts (receipt_date, si_or_number, particulars, amount_cents, custom_values, created_by, created_by_name, image_url, onedrive_file_id)
-      VALUES (@date, @si_or_number, @particulars, @amount_cents, @custom_values, @created_by, @created_by_name, @image_url, @onedrive_file_id)
+      INSERT INTO receipts (receipt_date, si_or_number, particulars, particulars_category, particulars_detail, amount_cents, custom_values, created_by, created_by_name, image_url, onedrive_file_id)
+      VALUES (@date, @si_or_number, @particulars, @particulars_category, @particulars_detail, @amount_cents, @custom_values, @created_by, @created_by_name, @image_url, @onedrive_file_id)
     `).run({
-      date, si_or_number: siOrNumber.trim(), particulars: particulars.trim(),
+      date, si_or_number: siOrNumber.trim(), particulars: particularsResult.particulars,
+      particulars_category: particularsResult.category, particulars_detail: particularsResult.detail,
       amount_cents: Math.round(amountNumber * 100), custom_values: JSON.stringify(customResult.values),
       created_by: request.user.id, created_by_name: request.user.displayName,
       image_url: uploadedImage?.webUrl || null, onedrive_file_id: uploadedImage?.fileId || null
@@ -1109,22 +1181,21 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
   const receiptId = Number(request.params.id);
   if (!Number.isSafeInteger(receiptId) || receiptId <= 0) return response.status(400).json({ error: "Select a valid receipt." });
   const receipt = await database.prepare(`
-    SELECT id, created_by, image_url, onedrive_file_id
+    SELECT id, created_by, image_url, onedrive_file_id, particulars_category
     FROM receipts WHERE id = ?
   `).get(receiptId);
   if (!receipt) return response.status(404).json({ error: "Receipt not found." });
   if (!userCan("receipts:edit_own", receipt, request.user)) {
     return response.status(403).json({ error: "Your user group cannot edit this receipt." });
   }
-  const { date, siOrNumber, particulars, amount } = request.body || {};
+  const { date, siOrNumber, amount } = request.body || {};
   const amountNumber = typeof amount === "number" ? amount : Number(amount);
   if (!validDate(date)) return response.status(400).json({ error: "Enter a valid receipt date." });
   if (typeof siOrNumber !== "string" || !siOrNumber.trim() || siOrNumber.trim().length > 80) {
     return response.status(400).json({ error: "SI/OR number is required and must be 80 characters or fewer." });
   }
-  if (typeof particulars !== "string" || !particulars.trim() || particulars.trim().length > 1000) {
-    return response.status(400).json({ error: "Particulars are required and must be 1,000 characters or fewer." });
-  }
+  const particularsResult = await validateParticularsInput(request.body, receipt.particulars_category || "");
+  if (particularsResult.error) return response.status(400).json({ error: particularsResult.error });
   if (!Number.isFinite(amountNumber) || amountNumber <= 0 || amountNumber > 1000000000) {
     return response.status(400).json({ error: "Amount must be greater than zero and no more than 1,000,000,000." });
   }
@@ -1142,6 +1213,7 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
     await database.prepare(`
       UPDATE receipts
       SET receipt_date = @date, si_or_number = @si_or_number, particulars = @particulars,
+        particulars_category = @particulars_category, particulars_detail = @particulars_detail,
         amount_cents = @amount_cents, custom_values = @custom_values,
         image_url = COALESCE(@image_url, image_url),
         onedrive_file_id = COALESCE(@onedrive_file_id, onedrive_file_id),
@@ -1151,7 +1223,9 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
       id: receiptId,
       date,
       si_or_number: siOrNumber.trim(),
-      particulars: particulars.trim(),
+      particulars: particularsResult.particulars,
+      particulars_category: particularsResult.category,
+      particulars_detail: particularsResult.detail,
       amount_cents: Math.round(amountNumber * 100),
       custom_values: JSON.stringify(customResult.values),
       image_url: uploadedImage?.webUrl || null,
@@ -1548,6 +1622,49 @@ app.get("/api/admin/fields", requirePermission("fields:manage"), async (_request
     sortOrder: field.sort_order
   }));
   response.json({ fields });
+});
+
+app.get("/api/admin/particulars", requirePermission("particulars:manage"), async (_request, response) => {
+  const particulars = await database.prepare(`
+    SELECT id, label, active, sort_order
+    FROM receipt_particulars ORDER BY sort_order, id
+  `).all();
+  response.json({ particulars: particulars.map((item) => ({
+    id: item.id,
+    label: item.label,
+    active: Boolean(item.active),
+    sortOrder: item.sort_order
+  })) });
+});
+
+app.post("/api/admin/particulars", requirePermission("particulars:manage"), async (request, response) => {
+  const label = typeof request.body?.label === "string" ? request.body.label.trim() : "";
+  if (!label || label.length > 60) {
+    return response.status(400).json({ error: "Particulars choices must be 1-60 characters." });
+  }
+  if (await database.prepare("SELECT id FROM receipt_particulars WHERE label = ? COLLATE NOCASE").get(label)) {
+    return response.status(409).json({ error: "That particulars choice already exists." });
+  }
+  const result = await database.prepare(`
+    INSERT INTO receipt_particulars (label, active, sort_order)
+    VALUES (?, 1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM receipt_particulars))
+  `).run(label);
+  response.status(201).json({ id: Number(result.lastInsertRowid) });
+});
+
+app.put("/api/admin/particulars/:id", requirePermission("particulars:manage"), async (request, response) => {
+  const particularsId = Number(request.params.id);
+  if (!Number.isSafeInteger(particularsId) || particularsId <= 0) {
+    return response.status(400).json({ error: "Select a valid particulars choice." });
+  }
+  if (typeof request.body?.active !== "boolean") {
+    return response.status(400).json({ error: "Choose whether the particulars choice should be active." });
+  }
+  const result = await database.prepare(`
+    UPDATE receipt_particulars SET active = ? WHERE id = ?
+  `).run(request.body.active ? 1 : 0, particularsId);
+  if (!result.changes) return response.status(404).json({ error: "Particulars choice not found." });
+  response.json({ updated: true });
 });
 
 app.post("/api/admin/fields", requirePermission("fields:manage"), async (request, response) => {

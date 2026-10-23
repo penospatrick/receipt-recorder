@@ -186,6 +186,83 @@ test("login is required and user-group permissions isolate field-officer receipt
   assert.equal(deleteInUse.status, 400);
 });
 
+test("particulars categories support Others details, report filters, and admin visibility controls", async () => {
+  const { particulars } = await json(await fetch(`${baseUrl}/api/particulars`, {
+    headers: { cookie: officerCookie }
+  }));
+  assert.deepEqual(particulars.map((item) => item.label), ["Repairs", "Meals", "Registration", "Others"]);
+
+  const deniedSettings = await fetch(`${baseUrl}/api/admin/particulars`, {
+    headers: { cookie: officerCookie }
+  });
+  assert.equal(deniedSettings.status, 403);
+
+  const addedChoice = await json(await post("/api/admin/particulars", {
+    label: "Transportation"
+  }, adminCookie));
+  assert.ok(addedChoice.id);
+  const duplicateChoice = await post("/api/admin/particulars", {
+    label: "transportation"
+  }, adminCookie);
+  assert.equal(duplicateChoice.status, 409);
+
+  const missingDetail = await post("/api/receipts", {
+    date: "2026-10-10",
+    siOrNumber: "PARTICULARS-MISSING",
+    particularsCategory: "Others",
+    amount: 12,
+    customValues: { [customFieldId]: "Finance" }
+  }, officerCookie);
+  assert.equal(missingDetail.status, 400);
+
+  const repairs = await json(await post("/api/receipts", {
+    date: "2026-10-10",
+    siOrNumber: "PARTICULARS-REPAIRS",
+    particularsCategory: "Repairs",
+    particularsDetail: "",
+    amount: 25,
+    customValues: { [customFieldId]: "Finance" }
+  }, officerCookie));
+  const other = await json(await post("/api/receipts", {
+    date: "2026-10-11",
+    siOrNumber: "PARTICULARS-OTHER",
+    particularsCategory: "Others",
+    particularsDetail: "Replacement office chair",
+    amount: 45,
+    customValues: { [customFieldId]: "Finance" }
+  }, officerCookie));
+  assert.ok(repairs.id);
+  assert.ok(other.id);
+
+  const otherReceipt = await json(await fetch(`${baseUrl}/api/receipts?particularCategory=Others`, {
+    headers: { cookie: officerCookie }
+  }));
+  assert.deepEqual(otherReceipt.receipts.map((receipt) => receipt.particulars), ["Others: Replacement office chair"]);
+  assert.equal(otherReceipt.receipts[0].particularsDetail, "Replacement office chair");
+
+  const filteredExport = await fetch(`${baseUrl}/api/receipts/export.xlsx?particularCategory=Repairs`, {
+    headers: { cookie: accountingCookie }
+  });
+  assert.equal(filteredExport.status, 200);
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(await filteredExport.arrayBuffer()));
+  const sheet = workbook.getWorksheet("Receipts");
+  assert.equal(sheet.getRow(2).getCell(2).value, "PARTICULARS-REPAIRS");
+  assert.equal(sheet.getRow(3).getCell(2).value, null);
+  assert.equal(sheet.getRow(4).getCell(3).value, "TOTAL");
+
+  const hiddenChoice = await fetch(`${baseUrl}/api/admin/particulars/${addedChoice.id}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", cookie: adminCookie },
+    body: JSON.stringify({ active: false })
+  });
+  assert.equal(hiddenChoice.status, 200);
+  const updatedOptions = await json(await fetch(`${baseUrl}/api/particulars`, {
+    headers: { cookie: officerCookie }
+  }));
+  assert.equal(updatedOptions.particulars.some((item) => item.label === "Transportation"), false);
+});
+
 test("OneDrive connection uses organizational accounts and legacy image uploads remain size-limited", async () => {
   const status = await json(await fetch(`${baseUrl}/api/onedrive/status`, {
     headers: { cookie: adminCookie }

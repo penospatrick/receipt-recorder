@@ -44,7 +44,7 @@ On a phone, open the deployed HTTPS address in the browser and use its **Add to 
 
 ## Default user groups
 
-- **System Admin:** manage users and groups, configure fields, and access all receipt actions.
+- **System Admin:** manage users and groups, configure fields and particulars choices, and access all receipt actions.
 - **Field Officer:** create receipts and view receipts entered by that user.
 - **Accounting:** view all receipts and download Excel reports.
 
@@ -52,11 +52,11 @@ In **User accounts**, administrators can create, edit, disable, enable, or perma
 
 Administrators can create multiple accounts from **Create users in bulk** by downloading the Excel template and uploading the completed `.xlsx` workbook. The `Users` sheet must include `Username`, `Full Name`, `User Group`, and `Temporary Password` columns; user groups must match an existing group. Uploads are limited to 2 MB and 200 user rows. Valid rows are created while invalid or duplicate rows are skipped and reported individually. Imported users and users whose password an administrator resets must set a different password (10–200 characters) at next sign-in before accessing the workspace. A password reset signs out every existing session for that account. Existing accounts are not forced to change their passwords unless an administrator resets their password.
 
-In **Custom fields**, administrators can add text, number, date, or dropdown fields and mark them required. They appear on the receipt form and as additional Excel columns. Archiving a field keeps its existing receipt values for history and export.
+In **Custom fields**, administrators can add text, number, date, or dropdown fields and mark them required. They appear on the receipt form and as additional Excel columns. Archiving a field keeps its existing receipt values for history and export. The **Particulars** setting lets administrators add or hide receipt categories; the initial choices are Repairs, Meals, Registration, and Others. Choosing Others prompts for a free-text description.
 
 Users with permission to edit a receipt can replace its attached OneDrive photo while editing. Choose a replacement image before saving; leaving the image picker empty keeps the current photo. The app removes the replaced file from OneDrive after the receipt is updated.
 
-Excel filters include a date range, amount bounds, user group, entering user, and any active custom fields. Select a user group to limit the **Entered by** list to active users in that group. Use **Preview matching receipts** to check the filtered set before downloading. The server applies the selected filters to the workbook and enforces the signed-in user's data permissions.
+Excel filters include a date range, amount bounds, user group, entering user, particulars category, and any active custom fields. Select a user group to limit the **Entered by** list to active users in that group. Use **Preview matching receipts** to check the filtered set before downloading. The server applies the selected filters to the workbook and enforces the signed-in user's data permissions.
 
 ## Access
 

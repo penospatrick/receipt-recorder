@@ -57,7 +57,13 @@
             <input id="si-or-number" name="siOrNumber" type="text" maxlength="80" placeholder="e.g. OR-001234" autocomplete="off" required>
 
             <label for="particulars">Particulars <span class="required">*</span></label>
-            <textarea id="particulars" name="particulars" rows="3" maxlength="1000" placeholder="What was this receipt for?" required></textarea>
+            <select id="particulars" name="particularsCategory" required>
+              <option value="">Choose a category…</option>
+            </select>
+            <div id="particulars-detail-wrap" class="particulars-detail-wrap" hidden>
+              <label for="particulars-detail">Particulars details <span class="required">*</span></label>
+              <input id="particulars-detail" name="particularsDetail" type="text" maxlength="1000" placeholder="What was this receipt for?">
+            </div>
 
             <label for="amount">Amount <span class="required">*</span></label>
             <div class="amount-input">
@@ -103,6 +109,7 @@
               <div><label for="filter-amount-max">Maximum amount</label><input id="filter-amount-max" type="number" min="0" step="0.01" placeholder="No maximum"></div>
               <div id="filter-group-wrap"><label for="filter-group">User group</label><select id="filter-group"><option value="">All groups</option></select></div>
               <div id="filter-user-wrap"><label for="filter-user">Entered by</label><select id="filter-user"><option value="">All users</option></select></div>
+              <div><label for="filter-particular-category">Particulars</label><select id="filter-particular-category"><option value="">All particulars</option></select></div>
               <div class="custom-filter-grid" id="custom-filters"></div>
               <div class="filter-actions">
                 <button class="secondary-button" id="clear-filters" type="button">Clear filters</button>
@@ -134,6 +141,16 @@
           </div>
         </div>
         <div class="admin-content">
+          <nav class="admin-sidebar" aria-label="Administration settings">
+            <p class="admin-sidebar-title">ADMIN SETTINGS</p>
+            <button class="admin-sidebar-link" data-admin-home type="button">Overview</button>
+            <button class="admin-sidebar-link" data-admin-open="users" type="button">Users</button>
+            <button class="admin-sidebar-link" data-admin-open="groups" type="button">User groups</button>
+            <button class="admin-sidebar-link" data-admin-open="fields" type="button">Custom fields</button>
+            <button class="admin-sidebar-link" data-admin-open="particulars" type="button">Particulars</button>
+            <button class="admin-sidebar-link" data-admin-open="onedrive" type="button">OneDrive</button>
+          </nav>
+          <div class="admin-workspace">
           <section class="admin-module-home" id="admin-module-home" aria-label="Administration modules">
             <button class="admin-module-card" data-admin-open="users" type="button">
               <span class="admin-module-icon" aria-hidden="true">01</span>
@@ -158,6 +175,12 @@
               <span class="admin-module-title">OneDrive</span>
               <span class="admin-module-description">Connect the corporate account used to store receipt photos.</span>
               <span class="admin-module-link">Manage OneDrive <span aria-hidden="true">→</span></span>
+            </button>
+            <button class="admin-module-card" data-admin-open="particulars" type="button">
+              <span class="admin-module-icon" aria-hidden="true">05</span>
+              <span class="admin-module-title">Receipt particulars</span>
+              <span class="admin-module-description">Add or hide choices shown in receipt entry and report filters.</span>
+              <span class="admin-module-link">Open particulars <span aria-hidden="true">→</span></span>
             </button>
           </section>
           <section class="admin-pane" id="admin-onedrive-pane" data-admin-module="onedrive" hidden>
@@ -265,6 +288,22 @@
             </form>
             <div class="table-scroll"><table><thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Status</th><th>Actions</th></tr></thead><tbody id="fields-table-body"></tbody></table></div>
           </section>
+          <section class="admin-pane" id="admin-particulars-pane" data-admin-module="particulars" hidden>
+            <div class="admin-module-header">
+              <button class="admin-back-button" data-admin-home type="button"><span aria-hidden="true">←</span> Administration overview</button>
+              <div class="admin-section-heading"><div><h3>Receipt particulars</h3><p>Add categories or hide them from new entries and report filters. Existing receipts remain unchanged.</p></div></div>
+            </div>
+            <form class="admin-form particulars-form" id="particulars-form">
+              <label for="particular-option-label">New dropdown choice</label>
+              <div class="particulars-form-row">
+                <input id="particular-option-label" type="text" maxlength="60" placeholder="e.g. Transportation" required>
+                <button class="primary-button compact-button" type="submit">Add choice</button>
+              </div>
+              <p class="admin-message" id="particulars-message" role="status" aria-live="polite"></p>
+            </form>
+            <div class="table-scroll"><table><thead><tr><th>Choice</th><th>Status</th><th>Actions</th></tr></thead><tbody id="particulars-table-body"></tbody></table></div>
+          </section>
+          </div>
         </div>
       </section>
       <footer class="page-footer">

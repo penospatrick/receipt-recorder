@@ -30,6 +30,8 @@ const sqliteSchema = `
     receipt_date TEXT NOT NULL,
     si_or_number TEXT NOT NULL,
     particulars TEXT NOT NULL,
+    particulars_category TEXT NOT NULL DEFAULT '',
+    particulars_detail TEXT NOT NULL DEFAULT '',
     amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
     custom_values TEXT NOT NULL DEFAULT '{}',
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -43,6 +45,13 @@ const sqliteSchema = `
     field_type TEXT NOT NULL,
     required INTEGER NOT NULL DEFAULT 0,
     options_json TEXT NOT NULL DEFAULT '[]',
+    active INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS receipt_particulars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL COLLATE NOCASE UNIQUE,
     active INTEGER NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -159,6 +168,8 @@ class ReceiptDatabase {
       );
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS image_url TEXT");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS onedrive_file_id TEXT");
+      await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS particulars_category TEXT NOT NULL DEFAULT ''");
+      await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS particulars_detail TEXT NOT NULL DEFAULT ''");
     } else {
       this.database.exec(sqliteSchema);
       const existingColumns = this.database.pragma("table_info(receipts)");
@@ -171,6 +182,8 @@ class ReceiptDatabase {
       }
       const migrations = [
         ["custom_values", "TEXT NOT NULL DEFAULT '{}'"],
+        ["particulars_category", "TEXT NOT NULL DEFAULT ''"],
+        ["particulars_detail", "TEXT NOT NULL DEFAULT ''"],
         ["created_by", "INTEGER REFERENCES users(id) ON DELETE SET NULL"],
         ["created_by_name", "TEXT"],
         ["updated_at", "TEXT"]

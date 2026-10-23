@@ -19,6 +19,9 @@ button { cursor: pointer; }
 select { max-width: 100%; }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   height: 76px;
   padding: 0 max(28px, calc((100vw - 1160px) / 2));
   display: flex;
@@ -58,11 +61,12 @@ h1, h2 { font-family: Manrope, "Segoe UI", sans-serif; }
 .heading-icon svg { width: 19px; height: 19px; }
 label { display: block; margin: 0 0 7px; color: #344e47; font-size: 12px; font-weight: 600; }
 .required { color: #b87955; }
-input, textarea { width: 100%; border: 1px solid #dfe8e2; border-radius: 8px; color: var(--ink); background: #fff; outline: none; font-size: 13px; transition: border-color .18s, box-shadow .18s; }
+input, textarea, select { width: 100%; border: 1px solid #dfe8e2; border-radius: 8px; color: var(--ink); background: #fff; outline: none; font-size: 13px; transition: border-color .18s, box-shadow .18s; }
 input { height: 42px; padding: 0 12px; }
+select { height: 42px; padding: 0 12px; }
 textarea { min-height: 82px; padding: 11px 12px; resize: vertical; line-height: 1.5; }
 input::placeholder, textarea::placeholder { color: #a2aea8; }
-input:focus, textarea:focus { border-color: #6f9b88; box-shadow: 0 0 0 3px rgba(71, 127, 102, .12); }
+input:focus, textarea:focus, select:focus { border-color: #6f9b88; box-shadow: 0 0 0 3px rgba(71, 127, 102, .12); }
 .entry-card form > label:not(:first-of-type) { margin-top: 15px; }
 .amount-input { position: relative; }
 .amount-input > span { position: absolute; z-index: 1; left: 12px; top: 10px; color: #668176; font-size: 14px; }
@@ -197,6 +201,12 @@ body:not(.authenticated) { overflow: hidden; }
 .danger-button:hover { background: #fdf3f1; }
 
 .admin-panel { margin: 22px 0; padding: 25px 28px; }
+.admin-content { display: grid; grid-template-columns: 174px minmax(0, 1fr); gap: 22px; margin-top: 22px; align-items: start; }
+.admin-workspace { min-width: 0; }
+.admin-sidebar { position: sticky; top: 92px; display: grid; gap: 4px; padding: 10px; border: 1px solid #e8eeea; border-radius: 11px; background: #fafbfa; }
+.admin-sidebar-title { margin: 3px 8px 7px; color: #819089; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
+.admin-sidebar-link { width: 100%; padding: 9px 10px; border: 0; border-radius: 7px; color: #526860; background: transparent; text-align: left; font-size: 11px; font-weight: 600; }
+.admin-sidebar-link:hover, .admin-sidebar-link.is-active { color: var(--teal); background: #eaf3ef; }
 .admin-heading h2 { margin: 0; color: var(--teal); font-size: 21px; letter-spacing: -.55px; }
 .admin-description { margin: 7px 0 0; color: #7c8a84; font-size: 12px; }
 .admin-module-home { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; margin-top: 22px; }
@@ -222,6 +232,8 @@ body:not(.authenticated) { overflow: hidden; }
 .admin-form label { margin-bottom: 5px; font-size: 11px; }
 .admin-form input:not([type=checkbox]), .admin-form select, .admin-form textarea { height: 38px; padding: 0 10px; font-size: 12px; }
 .admin-form textarea { min-height: 61px; height: auto; padding: 9px 10px; }
+.particulars-form-row { display: flex; align-items: center; gap: 9px; }
+.particulars-form-row .primary-button { flex: 0 0 auto; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 13px; }
 .bulk-user-upload { margin: 21px 0; padding: 17px; border: 1px solid #e8eeea; border-radius: 11px; background: #fafbfa; }
 .bulk-user-form { display: grid; gap: 7px; }
@@ -259,6 +271,10 @@ td { padding: 10px; border-bottom: 1px solid #edf1ee; color: #38534a; }
   .export-panel { padding: 13px; }
   .filter-grid { gap: 10px 9px; }
   .admin-panel { margin: 16px 0; padding: 20px 17px; }
+  .admin-content { grid-template-columns: 1fr; gap: 14px; }
+  .admin-sidebar { position: static; display: flex; overflow-x: auto; padding: 7px; }
+  .admin-sidebar-title { display: none; }
+  .admin-sidebar-link { width: auto; flex: 0 0 auto; }
   .admin-module-home { grid-template-columns: 1fr; }
   .admin-module-card { min-height: 160px; }
   .group-layout { grid-template-columns: 1fr; }
