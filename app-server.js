@@ -1718,7 +1718,8 @@ app.get("/api/receipts/export.xlsx", requirePermission("receipts:export"), async
     const baseColumns = [
       { header: "Date", key: "date", width: 16 },
       { header: "SI/OR Number", key: "siOrNumber", width: 22 },
-      { header: "Particulars", key: "particulars", width: 48 },
+      { header: "Particulars", key: "particulars", width: 24 },
+      { header: "Particulars Details", key: "particularsDetail", width: 48 },
       { header: "Amount (PHP)", key: "amount", width: 18 },
       { header: "Entered By", key: "enteredBy", width: 24 }
     ];
@@ -1740,7 +1741,8 @@ app.get("/api/receipts/export.xlsx", requirePermission("receipts:export"), async
       const row = {
         date: new Date(`${receipt.receipt_date}T00:00:00.000Z`),
         siOrNumber: escapeExcelText(receipt.si_or_number),
-        particulars: escapeExcelText(receipt.particulars),
+        particulars: escapeExcelText(receipt.particulars_category || receipt.particulars),
+        particularsDetail: escapeExcelText(receipt.particulars_detail || ""),
         amount: receipt.amount_cents / 100,
         enteredBy: escapeExcelText(receipt.creator_name || "Former user"),
         imageLink: receipt.image_url
@@ -1755,7 +1757,9 @@ app.get("/api/receipts/export.xlsx", requirePermission("receipts:export"), async
     sheet.addRow({});
     const totalRow = sheet.addRow({
       particulars: "TOTAL",
-      amount: { formula: `SUM(D2:D${Math.max(2, receipts.length + 1)})` }
+      amount: {
+        formula: `SUM(${sheet.getColumn("amount").letter}2:${sheet.getColumn("amount").letter}${Math.max(2, receipts.length + 1)})`
+      }
     });
     totalRow.font = { bold: true };
     totalRow.getCell("amount").numFmt = '"₱"#,##0.00';

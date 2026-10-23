@@ -231,14 +231,27 @@ test("particulars categories support Others details, report filters, and admin v
     amount: 45,
     customValues: { [customFieldId]: "Finance" }
   }, officerCookie));
+  const registration = await json(await post("/api/receipts", {
+    date: "2026-10-12",
+    siOrNumber: "PARTICULARS-REGISTRATION",
+    particularsCategory: "Registration",
+    particularsDetail: "",
+    amount: 35,
+    customValues: { [customFieldId]: "Finance" }
+  }, officerCookie));
   assert.ok(repairs.id);
   assert.ok(other.id);
+  assert.ok(registration.id);
 
   const otherReceipt = await json(await fetch(`${baseUrl}/api/receipts?particularCategory=Others`, {
     headers: { cookie: officerCookie }
   }));
   assert.deepEqual(otherReceipt.receipts.map((receipt) => receipt.particulars), ["Others: Replacement office chair"]);
   assert.equal(otherReceipt.receipts[0].particularsDetail, "Replacement office chair");
+  const registrationReceipt = await json(await fetch(`${baseUrl}/api/receipts?particularCategory=Registration`, {
+    headers: { cookie: officerCookie }
+  }));
+  assert.deepEqual(registrationReceipt.receipts.map((receipt) => receipt.siOrNumber), ["PARTICULARS-REGISTRATION"]);
 
   const filteredExport = await fetch(`${baseUrl}/api/receipts/export.xlsx?particularCategory=Repairs`, {
     headers: { cookie: accountingCookie }
@@ -247,9 +260,23 @@ test("particulars categories support Others details, report filters, and admin v
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(Buffer.from(await filteredExport.arrayBuffer()));
   const sheet = workbook.getWorksheet("Receipts");
+  assert.equal(sheet.getRow(1).getCell(3).value, "Particulars");
+  assert.equal(sheet.getRow(1).getCell(4).value, "Particulars Details");
   assert.equal(sheet.getRow(2).getCell(2).value, "PARTICULARS-REPAIRS");
+  assert.equal(sheet.getRow(2).getCell(3).value, "Repairs");
+  assert.equal(sheet.getRow(2).getCell(4).value, "");
   assert.equal(sheet.getRow(3).getCell(2).value, null);
   assert.equal(sheet.getRow(4).getCell(3).value, "TOTAL");
+
+  const otherExport = await fetch(`${baseUrl}/api/receipts/export.xlsx?particularCategory=Others`, {
+    headers: { cookie: accountingCookie }
+  });
+  assert.equal(otherExport.status, 200);
+  const otherWorkbook = new ExcelJS.Workbook();
+  await otherWorkbook.xlsx.load(Buffer.from(await otherExport.arrayBuffer()));
+  const otherSheet = otherWorkbook.getWorksheet("Receipts");
+  assert.equal(otherSheet.getRow(2).getCell(3).value, "Others");
+  assert.equal(otherSheet.getRow(2).getCell(4).value, "Replacement office chair");
 
   const hiddenChoice = await fetch(`${baseUrl}/api/admin/particulars/${addedChoice.id}`, {
     method: "PUT",
@@ -375,12 +402,12 @@ test("custom field filters produce an Excel file with the matching records and c
   await workbook.xlsx.load(Buffer.from(await exported.arrayBuffer()));
   const sheet = workbook.getWorksheet("Receipts");
   const exportedDate = sheet.getRow(2).getCell(1).value;
-  assert.equal(sheet.getRow(1).getCell(6).value, "Department");
+  assert.equal(sheet.getRow(1).getCell(7).value, "Department");
   assert.ok(exportedDate instanceof Date);
   assert.equal(exportedDate.toISOString().slice(0, 10), "2026-10-07");
   assert.equal(sheet.getRow(2).getCell(2).value, "FIELD-001");
-  assert.equal(sheet.getRow(2).getCell(6).value, "Finance");
-  assert.equal(sheet.getRow(4).getCell(4).value.formula, "SUM(D2:D2)");
+  assert.equal(sheet.getRow(2).getCell(7).value, "Finance");
+  assert.equal(sheet.getRow(4).getCell(5).value.formula, "SUM(E2:E2)");
 
   const emptyFilter = await fetch(`${baseUrl}/api/receipts/export.xlsx?cf_${customFieldId}=DoesNotExist`, {
     headers: { cookie: accountingCookie }
@@ -413,8 +440,8 @@ test("custom field filters produce an Excel file with the matching records and c
   const imageWorkbook = new ExcelJS.Workbook();
   await imageWorkbook.xlsx.load(Buffer.from(await imageExport.arrayBuffer()));
   const imageSheet = imageWorkbook.getWorksheet("Receipts");
-  assert.equal(imageSheet.getRow(1).getCell(7).value, "Receipt Image");
-  assert.deepEqual(imageSheet.getRow(2).getCell(7).value, {
+  assert.equal(imageSheet.getRow(1).getCell(8).value, "Receipt Image");
+  assert.deepEqual(imageSheet.getRow(2).getCell(8).value, {
     text: "Open receipt image",
     hyperlink: "https://1drv.ms/i/s!public-receipt-link"
   });

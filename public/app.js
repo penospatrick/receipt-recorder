@@ -256,7 +256,8 @@ function buildFilterQuery() {
   const values = [
     ["from", "#filter-from"], ["to", "#filter-to"],
     ["amountMin", "#filter-amount-min"], ["amountMax", "#filter-amount-max"],
-    ["groupId", "#filter-group"], ["userId", "#filter-user"]
+    ["groupId", "#filter-group"], ["userId", "#filter-user"],
+    ["particularCategory", "#filter-particular-category"]
   ];
   for (const [key, selector] of values) {
     const value = document.querySelector(selector).value.trim();
