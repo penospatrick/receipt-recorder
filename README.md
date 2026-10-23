@@ -21,7 +21,7 @@ When `SUPABASE_DB_URL` or `DATABASE_URL` is set to a PostgreSQL URI, the server 
 
 ## Deploy to Vercel
 
-This project deploys to Vercel as an Express application using the root `server.js` entrypoint. Vercel routes all API paths, including nested paths such as `/api/auth/login` and `/api/admin/users`, through the Express app. `vercel.json` rewrites `/` to the static `index.html`, and includes the Supabase schema and root CA in the function. No build command is required. Vercel serves files in `public/` from its CDN.
+This project deploys to Vercel as an Express application using the root `server.js` entrypoint. Vercel routes all API paths, including nested paths such as `/api/auth/login` and `/api/admin/users`, through the Express app. The Express app redirects `/` to the static `index.html`; `vercel.json` includes the Supabase schema and root CA in the function. No build command is required. Vercel serves files in `public/` from its CDN.
 
 Add these environment variables in **Project Settings → Environment Variables**:
 

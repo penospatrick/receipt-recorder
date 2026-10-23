@@ -957,6 +957,7 @@ app.use((request, _response, next) => {
   next();
 });
 app.use(authenticate);
+app.get("/", (_request, response) => response.redirect(302, "/index.html"));
 app.use(express.static(path.join(__dirname, "public"), { etag: true, maxAge: isProduction ? "1h" : 0 }));
 
 const loginLimiter = rateLimit({
