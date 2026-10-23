@@ -1719,7 +1719,7 @@ app.get("/api/receipts/export.xlsx", requirePermission("receipts:export"), async
       { header: "Date", key: "date", width: 16 },
       { header: "SI/OR Number", key: "siOrNumber", width: 22 },
       { header: "Particulars", key: "particulars", width: 24 },
-      { header: "Particulars Details", key: "particularsDetail", width: 48 },
+      { header: "Other Notes", key: "particularsDetail", width: 48 },
       { header: "Amount (PHP)", key: "amount", width: 18 },
       { header: "Entered By", key: "enteredBy", width: 24 }
     ];

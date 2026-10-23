@@ -261,7 +261,7 @@ test("particulars categories support Others details, report filters, and admin v
   await workbook.xlsx.load(Buffer.from(await filteredExport.arrayBuffer()));
   const sheet = workbook.getWorksheet("Receipts");
   assert.equal(sheet.getRow(1).getCell(3).value, "Particulars");
-  assert.equal(sheet.getRow(1).getCell(4).value, "Particulars Details");
+  assert.equal(sheet.getRow(1).getCell(4).value, "Other Notes");
   assert.equal(sheet.getRow(2).getCell(2).value, "PARTICULARS-REPAIRS");
   assert.equal(sheet.getRow(2).getCell(3).value, "Repairs");
   assert.equal(sheet.getRow(2).getCell(4).value, "");
