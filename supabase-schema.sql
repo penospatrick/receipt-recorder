@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS public.receipts (
   updated_at TIMESTAMPTZ,
   image_url TEXT,
   onedrive_file_id TEXT,
+  onedrive_account_email TEXT,
   attachment_name TEXT,
   attachment_type TEXT
 );
@@ -87,6 +88,8 @@ ALTER TABLE public.receipts
   ADD COLUMN IF NOT EXISTS attachment_name TEXT;
 ALTER TABLE public.receipts
   ADD COLUMN IF NOT EXISTS attachment_type TEXT;
+ALTER TABLE public.receipts
+  ADD COLUMN IF NOT EXISTS onedrive_account_email TEXT;
 
 ALTER TABLE public.receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
@@ -99,4 +102,13 @@ CREATE TABLE IF NOT EXISTS public.onedrive_auth (
   id INTEGER PRIMARY KEY CHECK (id = 1), access_token TEXT NOT NULL, refresh_token TEXT NOT NULL,
   expires_at BIGINT NOT NULL, account_email TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS public.onedrive_accounts (
+  account_email TEXT PRIMARY KEY, access_token TEXT NOT NULL, refresh_token TEXT NOT NULL,
+  expires_at BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO public.onedrive_accounts (account_email, access_token, refresh_token, expires_at)
+SELECT LOWER(account_email), access_token, refresh_token, expires_at
+FROM public.onedrive_auth WHERE id = 1
+ON CONFLICT (account_email) DO NOTHING;
 ALTER TABLE public.onedrive_auth ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.onedrive_accounts ENABLE ROW LEVEL SECURITY;

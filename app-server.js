@@ -253,21 +253,72 @@ function microsoftRedirectUri(request) {
 async function getOneDriveAuth() {
   return database.prepare("SELECT access_token, refresh_token, expires_at, account_email FROM onedrive_auth WHERE id = 1").get();
 }
+function normalizeOneDriveAccountEmail(accountEmail) {
+  return String(accountEmail || "").trim().toLowerCase();
+}
+async function getOneDriveAccountAuth(accountEmail) {
+  return database.prepare(`
+    SELECT access_token, refresh_token, expires_at, account_email
+    FROM onedrive_accounts WHERE account_email = ?
+  `).get(normalizeOneDriveAccountEmail(accountEmail));
+}
+async function saveOneDriveAccountTokens(tokens, accountEmail, fallbackRefreshToken = null) {
+  const normalizedEmail = normalizeOneDriveAccountEmail(accountEmail);
+  const existing = await getOneDriveAccountAuth(normalizedEmail);
+  const values = {
+    account_email: normalizedEmail,
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token || fallbackRefreshToken || existing?.refresh_token,
+    expires_at: tokens.expires_at || Date.now() + Number(tokens.expires_in || 3600) * 1000
+  };
+  if (!normalizedEmail || !values.refresh_token) {
+    throw new Error("Microsoft did not return a refresh token. Reconnect and approve offline access.");
+  }
+  await database.prepare(`
+    INSERT INTO onedrive_accounts (account_email, access_token, refresh_token, expires_at)
+    VALUES (@account_email, @access_token, @refresh_token, @expires_at)
+    ON CONFLICT (account_email) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      expires_at = excluded.expires_at,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(values);
+  return values;
+}
 async function storeOneDriveTokens(tokens, accountEmail, preserveExistingRefreshToken = true) {
   const existing = await getOneDriveAuth();
-  const values = { access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token || (preserveExistingRefreshToken ? existing?.refresh_token : null),
-    expires_at: Date.now() + Number(tokens.expires_in || 3600) * 1000, account_email: accountEmail };
-  if (!values.refresh_token) throw new Error("Microsoft did not return a refresh token. Reconnect and approve offline access.");
+  const normalizedEmail = normalizeOneDriveAccountEmail(accountEmail);
+  if (existing && normalizeOneDriveAccountEmail(existing.account_email) !== normalizedEmail) {
+    await database.prepare(`
+      INSERT INTO onedrive_accounts (account_email, access_token, refresh_token, expires_at)
+      VALUES (LOWER(@account_email), @access_token, @refresh_token, @expires_at)
+      ON CONFLICT (account_email) DO NOTHING
+    `).run(existing);
+  }
+  const currentAccount = normalizeOneDriveAccountEmail(existing?.account_email) === normalizedEmail;
+  const accountValues = await saveOneDriveAccountTokens(
+    tokens,
+    normalizedEmail,
+    preserveExistingRefreshToken && currentAccount ? existing?.refresh_token : null
+  );
+  const values = { ...accountValues, account_email: normalizedEmail };
   if (existing) {
     await database.prepare("UPDATE onedrive_auth SET access_token=@access_token, refresh_token=@refresh_token, expires_at=@expires_at, account_email=@account_email, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(values);
   } else {
     await database.prepare("INSERT INTO onedrive_auth (id,access_token,refresh_token,expires_at,account_email) VALUES (1,@access_token,@refresh_token,@expires_at,@account_email)").run(values);
   }
 }
-async function getOneDriveAccessToken() {
-  const saved = await getOneDriveAuth();
-  if (!saved) throw new Error("OneDrive is not connected. Ask an administrator to connect it first.");
+async function getOneDriveAccessToken(accountEmail = null) {
+  const active = await getOneDriveAuth();
+  const requestedEmail = normalizeOneDriveAccountEmail(accountEmail || active?.account_email);
+  const saved = active && normalizeOneDriveAccountEmail(active.account_email) === requestedEmail
+    ? active
+    : await getOneDriveAccountAuth(requestedEmail);
+  if (!saved) {
+    throw new Error(requestedEmail
+      ? `The OneDrive account ${requestedEmail} is not connected. Switch to that account to access this attachment.`
+      : "OneDrive is not connected. Ask an administrator to connect it first.");
+  }
   if (saved.access_token && Number(saved.expires_at) > Date.now() + 60000) return saved.access_token;
   const body = new URLSearchParams({ client_id: process.env.MICROSOFT_CLIENT_ID || "",
     client_secret: process.env.MICROSOFT_CLIENT_SECRET || "", grant_type: "refresh_token",
@@ -276,18 +327,21 @@ async function getOneDriveAccessToken() {
     headers:{"Content-Type":"application/x-www-form-urlencoded"}, body, cache:"no-store" });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error_description || data.error || "Could not refresh Microsoft access.");
-  await storeOneDriveTokens(data, saved.account_email);
+  const refreshed = await saveOneDriveAccountTokens(data, saved.account_email, saved.refresh_token);
+  if (active && normalizeOneDriveAccountEmail(active.account_email) === requestedEmail) {
+    await database.prepare("UPDATE onedrive_auth SET access_token=@access_token, refresh_token=@refresh_token, expires_at=@expires_at, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(refreshed);
+  }
   return data.access_token;
 }
-async function graphRequest(pathname, options = {}) {
-  const token = await getOneDriveAccessToken();
+async function graphRequest(pathname, options = {}, accountEmail = null) {
+  const token = await getOneDriveAccessToken(accountEmail);
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${token}`);
   return fetch(`https://graph.microsoft.com/v1.0${pathname}`, {...options, headers, cache:"no-store"});
 }
-async function ensureOneDriveReceiptFolder() {
+async function ensureOneDriveReceiptFolder(accountEmail = null) {
   const path = "/me/drive/root:/Receipt%20Uploads?$select=id,name,folder";
-  let check = await graphRequest(path);
+  let check = await graphRequest(path, {}, accountEmail);
   if (check.status === 404) {
     const created = await graphRequest("/me/drive/root/children", {
       method: "POST",
@@ -297,11 +351,11 @@ async function ensureOneDriveReceiptFolder() {
         folder: {},
         "@microsoft.graph.conflictBehavior": "fail"
       })
-    });
+    }, accountEmail);
     if (created.status !== 409 && !created.ok) {
       throw new Error(`Could not create Receipt Uploads folder: ${await created.text()}`);
     }
-    check = created.status === 409 ? await graphRequest(path) : created;
+    check = created.status === 409 ? await graphRequest(path, {}, accountEmail) : created;
   }
   const folder = await check.json().catch(() => ({}));
   if (!check.ok || typeof folder.id !== "string" || !folder.folder) {
@@ -317,11 +371,11 @@ function oneDriveFolderName(displayName) {
   if (!safeName) throw imageInputError("Your full name cannot be used as a OneDrive folder name.");
   return safeName.slice(0, 80);
 }
-async function ensureOneDriveUserReceiptFolder(displayName) {
-  const rootFolderId = await ensureOneDriveReceiptFolder();
+async function ensureOneDriveUserReceiptFolder(displayName, accountEmail = null) {
+  const rootFolderId = await ensureOneDriveReceiptFolder(accountEmail);
   const folderName = oneDriveFolderName(displayName);
   const folderPath = `/me/drive/root:/Receipt%20Uploads/${encodeURIComponent(folderName)}?$select=id,name,folder`;
-  let check = await graphRequest(folderPath);
+  let check = await graphRequest(folderPath, {}, accountEmail);
   if (check.status === 404) {
     const created = await graphRequest(`/me/drive/items/${encodeURIComponent(rootFolderId)}/children`, {
       method: "POST",
@@ -331,11 +385,11 @@ async function ensureOneDriveUserReceiptFolder(displayName) {
         folder: {},
         "@microsoft.graph.conflictBehavior": "fail"
       })
-    });
+    }, accountEmail);
     if (created.status !== 409 && !created.ok) {
       throw new Error(`Could not create the OneDrive folder for ${displayName}: ${await created.text()}`);
     }
-    check = created.status === 409 ? await graphRequest(folderPath) : created;
+    check = created.status === 409 ? await graphRequest(folderPath, {}, accountEmail) : created;
   }
   const folder = await check.json().catch(() => ({}));
   if (!check.ok || typeof folder.id !== "string" || !folder.folder || folder.name !== folderName) {
@@ -343,9 +397,12 @@ async function ensureOneDriveUserReceiptFolder(displayName) {
   }
   return { id: folder.id, name: folderName };
 }
-async function deleteOneDriveReceiptFile(fileId) {
-  const response = await graphRequest(`/me/drive/items/${encodeURIComponent(fileId)}`, { method: "DELETE" });
-  if (!response.ok && response.status !== 404) {
+async function deleteOneDriveReceiptFile(fileId, accountEmail = null, notFoundIsSuccess = true) {
+  const response = await graphRequest(`/me/drive/items/${encodeURIComponent(fileId)}`, { method: "DELETE" }, accountEmail);
+  if (response.status === 404 && !notFoundIsSuccess) {
+    throw new Error("This attachment was not found in the connected OneDrive account. The receipt was kept; reconnect the account that originally stored the file and try again.");
+  }
+  if (!response.ok && !(response.status === 404 && notFoundIsSuccess)) {
     throw new Error(`Could not remove the unused OneDrive attachment: ${await response.text()}`);
   }
 }
@@ -405,7 +462,8 @@ async function createReceiptImageUploadSession(request) {
   if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) {
     throw imageInputError("Microsoft OneDrive credentials are not configured on the server.", 503);
   }
-  const folder = await ensureOneDriveUserReceiptFolder(request.user.displayName);
+  const accountEmail = (await getOneDriveAuth())?.account_email;
+  const folder = await ensureOneDriveUserReceiptFolder(request.user.displayName, accountEmail);
   const safeName = name.replace(/[^A-Za-z0-9._-]/g, "_").slice(-90) || "receipt-image";
   const filename = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
   const sessionResponse = await graphRequest(
@@ -414,7 +472,8 @@ async function createReceiptImageUploadSession(request) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "rename" } })
-    }
+    },
+    accountEmail
   );
   const session = await sessionResponse.json().catch(() => ({}));
   if (!sessionResponse.ok || typeof session.uploadUrl !== "string") {
@@ -433,16 +492,17 @@ async function createReceiptImageUploadSession(request) {
     type: attachment.type,
     userId: request.user.id,
     receiptId,
+    accountEmail,
     expiresAt
   });
   return { uploadToken, chunkSize: MAX_RECEIPT_IMAGE_CHUNK_BYTES };
 }
-async function createOneDriveReceiptImageLink(fileId) {
+async function createOneDriveReceiptImageLink(fileId, accountEmail) {
   const sharing = await graphRequest(`/me/drive/items/${encodeURIComponent(fileId)}/createLink`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "view", scope: "anonymous" })
-  });
+  }, accountEmail);
   const sharingResult = await sharing.json().catch(() => ({}));
   if (!sharing.ok) {
     if (sharing.status === 400 || sharing.status === 403) {
@@ -465,8 +525,11 @@ async function completeReceiptImageUpload(uploadToken, fileId, userId, receiptId
   if (typeof fileId !== "string" || !fileId || fileId.length > 1024) {
     throw imageInputError("The uploaded OneDrive file could not be identified.");
   }
+  const accountEmail = session.accountEmail || (await getOneDriveAuth())?.account_email;
   const itemResponse = await graphRequest(
-    `/me/drive/items/${encodeURIComponent(fileId)}?$select=id,name,size,parentReference`
+    `/me/drive/items/${encodeURIComponent(fileId)}?$select=id,name,size,parentReference`,
+    {},
+    accountEmail
   );
   const item = await itemResponse.json().catch(() => ({}));
   if (!itemResponse.ok || item.name !== session.fileName || Number(item.size) !== session.size ||
@@ -478,16 +541,17 @@ async function completeReceiptImageUpload(uploadToken, fileId, userId, receiptId
   ).get(fileId, receiptId);
   if (existingReceipt) throw imageInputError("This uploaded file is already attached to another receipt.");
   try {
-    const webUrl = await createOneDriveReceiptImageLink(fileId);
+    const webUrl = await createOneDriveReceiptImageLink(fileId, accountEmail);
     return {
       fileId,
       webUrl,
       name: session.originalName,
-      type: session.type
+      type: session.type,
+      accountEmail
     };
   } catch (error) {
     try {
-      await deleteOneDriveReceiptFile(fileId);
+      await deleteOneDriveReceiptFile(fileId, accountEmail);
     } catch (cleanupError) {
       throw new Error(`${error instanceof Error ? error.message : "Could not create a OneDrive sharing link."} ${cleanupError instanceof Error ? cleanupError.message : "The uploaded image could not be cleaned up."}`);
     }
@@ -551,11 +615,12 @@ async function uploadReceiptImage(dataUrl, originalName, displayName) {
   if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) {
     throw imageInputError("Microsoft OneDrive credentials are not configured on the server.", 503);
   }
-  const folder = await ensureOneDriveUserReceiptFolder(displayName);
+  const accountEmail = (await getOneDriveAuth())?.account_email;
+  const folder = await ensureOneDriveUserReceiptFolder(displayName, accountEmail);
   const safeName = String(originalName || "receipt-image").replace(/[^A-Za-z0-9._-]/g, "_").slice(-90) || "receipt-image";
   const filename = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
   const upload = await graphRequest(`/me/drive/items/${encodeURIComponent(folder.id)}:/${encodeURIComponent(filename)}:/content`,
-    {method:"PUT",headers:{"Content-Type":match[1]},body:buffer});
+    {method:"PUT",headers:{"Content-Type":match[1]},body:buffer}, accountEmail);
   const file = await upload.json();
   if (!upload.ok) throw new Error(file.error?.message || "OneDrive attachment upload failed.");
   if (typeof file.id !== "string" || !file.id) throw new Error("OneDrive did not return an uploaded file ID.");
@@ -564,7 +629,7 @@ async function uploadReceiptImage(dataUrl, originalName, displayName) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "view", scope: "anonymous" })
-    });
+    }, accountEmail);
     const sharingResult = await sharing.json().catch(() => ({}));
     if (!sharing.ok) {
       if (sharing.status === 400 || sharing.status === 403) {
@@ -582,10 +647,10 @@ async function uploadReceiptImage(dataUrl, originalName, displayName) {
       type === "image/webp" ? ".webp" : ".gif";
     const name = path.basename(String(originalName || `receipt${extension}`))
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 180);
-    return { fileId: file.id, webUrl: imageUrl, name: name || `receipt${extension}`, type };
+    return { fileId: file.id, webUrl: imageUrl, name: name || `receipt${extension}`, type, accountEmail };
   } catch (error) {
     try {
-      await deleteOneDriveReceiptFile(file.id);
+      await deleteOneDriveReceiptFile(file.id, accountEmail);
     } catch (cleanupError) {
       throw new Error(`${error instanceof Error ? error.message : "Could not create a OneDrive sharing link."} ${cleanupError instanceof Error ? cleanupError.message : "The uploaded image could not be cleaned up."}`);
     }
@@ -1050,7 +1115,9 @@ app.delete("/api/receipts/image-upload-sessions", requireAuth, async (request, r
         return response.status(400).json({ error: "The uploaded OneDrive attachment could not be identified." });
       }
       const itemResponse = await graphRequest(
-        `/me/drive/items/${encodeURIComponent(fileId)}?$select=id,name,size,parentReference`
+        `/me/drive/items/${encodeURIComponent(fileId)}?$select=id,name,size,parentReference`,
+        {},
+        session.accountEmail
       );
       const item = await itemResponse.json().catch(() => ({}));
       if (itemResponse.status === 404) return response.json({ cancelled: true });
@@ -1062,7 +1129,7 @@ app.delete("/api/receipts/image-upload-sessions", requireAuth, async (request, r
           item.parentReference?.id !== session.folderId) {
         return response.status(400).json({ error: "The uploaded image could not be verified for cleanup." });
       }
-      await deleteOneDriveReceiptFile(fileId);
+      await deleteOneDriveReceiptFile(fileId, session.accountEmail);
     } else {
       const cancelled = await fetch(session.uploadUrl, { method: "DELETE", cache: "no-store", redirect: "error" });
       if (!cancelled.ok && cancelled.status !== 404 && cancelled.status !== 410) {
@@ -1238,12 +1305,12 @@ app.post("/api/receipts", requirePermission("receipts:create"), async (request, 
       INSERT INTO receipts (
         receipt_date, si_or_number, particulars, particulars_category, particulars_detail,
         amount_cents, custom_values, created_by, created_by_name, image_url, onedrive_file_id,
-        attachment_name, attachment_type
+        onedrive_account_email, attachment_name, attachment_type
       )
       VALUES (
         @date, @si_or_number, @particulars, @particulars_category, @particulars_detail,
         @amount_cents, @custom_values, @created_by, @created_by_name, @image_url, @onedrive_file_id,
-        @attachment_name, @attachment_type
+        @onedrive_account_email, @attachment_name, @attachment_type
       )
     `).run({
       date, si_or_number: siOrNumber.trim(), particulars: particularsResult.particulars,
@@ -1252,6 +1319,7 @@ app.post("/api/receipts", requirePermission("receipts:create"), async (request, 
       created_by: request.user.id, created_by_name: request.user.displayName,
       image_url: uploadedImage?.webUrl || null,
       onedrive_file_id: uploadedImage?.fileId || null,
+      onedrive_account_email: uploadedImage?.accountEmail || null,
       attachment_name: uploadedImage?.name || null,
       attachment_type: uploadedImage?.type || null
     });
@@ -1259,7 +1327,7 @@ app.post("/api/receipts", requirePermission("receipts:create"), async (request, 
   } catch (error) {
     if (uploadedImage?.fileId) {
       try {
-        await deleteOneDriveReceiptFile(uploadedImage.fileId);
+        await deleteOneDriveReceiptFile(uploadedImage.fileId, uploadedImage.accountEmail);
       } catch (cleanupError) {
         console.error("Could not clean up OneDrive attachment after receipt save failure:", cleanupError);
         return response.status(502).json({
@@ -1276,7 +1344,7 @@ app.get("/api/receipts/:id/image", requireAuth, async (request, response) => {
   const id = Number(request.params.id);
   if (!Number.isSafeInteger(id) || id <= 0) return response.status(400).json({error:"Select a valid receipt."});
   const receipt = await database.prepare(`
-    SELECT id, created_by, onedrive_file_id, attachment_name, attachment_type
+    SELECT id, created_by, onedrive_file_id, onedrive_account_email, attachment_name, attachment_type
     FROM receipts WHERE id = ?
   `).get(id);
   if (!receipt?.onedrive_file_id) return response.status(404).json({error:"No attachment is attached to this receipt."});
@@ -1284,7 +1352,11 @@ app.get("/api/receipts/:id/image", requireAuth, async (request, response) => {
     return response.status(403).json({error:"Your user group cannot view this receipt attachment."});
   }
   try {
-    const file = await graphRequest(`/me/drive/items/${encodeURIComponent(receipt.onedrive_file_id)}/content`);
+    const file = await graphRequest(
+      `/me/drive/items/${encodeURIComponent(receipt.onedrive_file_id)}/content`,
+      {},
+      receipt.onedrive_account_email
+    );
     if (!file.ok) return response.status(502).json({error:"Could not load attachment from OneDrive."});
     const contentType = receipt.attachment_type || file.headers.get("content-type") || "application/octet-stream";
     const isImage = contentType.startsWith("image/");
@@ -1304,7 +1376,8 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
   const receiptId = Number(request.params.id);
   if (!Number.isSafeInteger(receiptId) || receiptId <= 0) return response.status(400).json({ error: "Select a valid receipt." });
   const receipt = await database.prepare(`
-    SELECT id, created_by, image_url, onedrive_file_id, attachment_name, attachment_type, particulars_category
+    SELECT id, created_by, image_url, onedrive_file_id, onedrive_account_email,
+      attachment_name, attachment_type, particulars_category
     FROM receipts WHERE id = ?
   `).get(receiptId);
   if (!receipt) return response.status(404).json({ error: "Receipt not found." });
@@ -1340,6 +1413,7 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
         amount_cents = @amount_cents, custom_values = @custom_values,
         image_url = COALESCE(@image_url, image_url),
         onedrive_file_id = COALESCE(@onedrive_file_id, onedrive_file_id),
+        onedrive_account_email = COALESCE(@onedrive_account_email, onedrive_account_email),
         attachment_name = COALESCE(@attachment_name, attachment_name),
         attachment_type = COALESCE(@attachment_type, attachment_type),
         updated_at = CURRENT_TIMESTAMP
@@ -1355,6 +1429,7 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
       custom_values: JSON.stringify(customResult.values),
       image_url: uploadedImage?.webUrl || null,
       onedrive_file_id: uploadedImage?.fileId || null,
+      onedrive_account_email: uploadedImage?.accountEmail || null,
       attachment_name: uploadedImage?.name || null,
       attachment_type: uploadedImage?.type || null
     });
@@ -1362,7 +1437,11 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
     let warning = null;
     if (uploadedImage && receipt.onedrive_file_id) {
       try {
-        await deleteOneDriveReceiptFile(receipt.onedrive_file_id);
+        await deleteOneDriveReceiptFile(
+          receipt.onedrive_file_id,
+          receipt.onedrive_account_email,
+          Boolean(receipt.onedrive_account_email)
+        );
       } catch (error) {
         console.error("Could not remove replaced OneDrive receipt attachment:", error);
         warning = "the previous OneDrive photo could not be deleted. Contact an administrator to remove the unused file.";
@@ -1377,7 +1456,7 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
   } catch (error) {
     if (uploadedImage?.fileId) {
       try {
-        await deleteOneDriveReceiptFile(uploadedImage.fileId);
+        await deleteOneDriveReceiptFile(uploadedImage.fileId, uploadedImage.accountEmail);
       } catch (cleanupError) {
         console.error("Could not clean up replacement OneDrive attachment after receipt update failure:", cleanupError);
         return response.status(502).json({
@@ -1393,14 +1472,21 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
 app.delete("/api/receipts/:id", requireAuth, async (request, response) => {
   const receiptId = Number(request.params.id);
   if (!Number.isSafeInteger(receiptId) || receiptId <= 0) return response.status(400).json({ error: "Select a valid receipt." });
-  const receipt = await database.prepare("SELECT id, created_by, onedrive_file_id FROM receipts WHERE id = ?").get(receiptId);
+  const receipt = await database.prepare(`
+    SELECT id, created_by, onedrive_file_id, onedrive_account_email
+    FROM receipts WHERE id = ?
+  `).get(receiptId);
   if (!receipt) return response.status(404).json({ error: "Receipt not found." });
   if (!userCan("receipts:delete_own", receipt, request.user)) {
     return response.status(403).json({ error: "Your user group cannot delete this receipt." });
   }
   if (receipt.onedrive_file_id) {
     try {
-      await deleteOneDriveReceiptFile(receipt.onedrive_file_id);
+      await deleteOneDriveReceiptFile(
+        receipt.onedrive_file_id,
+        receipt.onedrive_account_email,
+        Boolean(receipt.onedrive_account_email)
+      );
     } catch (error) { return response.status(502).json({error:error instanceof Error ? error.message : "Could not delete the OneDrive attachment."}); }
   }
   await database.prepare("DELETE FROM receipts WHERE id = ?").run(receiptId);

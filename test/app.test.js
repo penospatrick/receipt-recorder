@@ -371,9 +371,62 @@ test("OneDrive connection uses organizational accounts and legacy image uploads 
       refresh_token: "replacement-refresh-token",
       account_email: "replacement@example.test"
     });
+    const previousAccount = await server.database.prepare(
+      "SELECT access_token, refresh_token FROM onedrive_accounts WHERE account_email = ?"
+    ).get("previous@example.test");
+    assert.deepEqual(previousAccount, {
+      access_token: "previous-access-token",
+      refresh_token: "previous-refresh-token"
+    });
+
+    const admin = await server.database.prepare("SELECT id FROM users WHERE username = ?").get("admin");
+    const receipt = await server.database.prepare(`
+      INSERT INTO receipts (
+        receipt_date, si_or_number, particulars, amount_cents, custom_values,
+        created_by, created_by_name, onedrive_file_id, onedrive_account_email
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "2026-10-23", "OLD-ACCOUNT-001", "Old OneDrive account receipt", 1000, "{}",
+      admin.id, "System Administrator", "previous-account-file-id", "previous@example.test"
+    );
+    let deleteAuthorization;
+    global.fetch = async (url, options = {}) => {
+      if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+      assert.match(String(url), /^https:\/\/graph\.microsoft\.com\/v1\.0\/me\/drive\/items\//);
+      deleteAuthorization = options.headers.get("Authorization");
+      if (String(url).endsWith("/legacy-unassigned-file-id")) {
+        return new Response(JSON.stringify({ error: { code: "itemNotFound" } }), { status: 404 });
+      }
+      assert.equal(String(url), "https://graph.microsoft.com/v1.0/me/drive/items/previous-account-file-id");
+      return new Response(null, { status: 204 });
+    };
+    const deletedReceipt = await fetch(`${baseUrl}/api/receipts/${receipt.lastInsertRowid}`, {
+      method: "DELETE",
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(deletedReceipt.status, 200);
+    assert.equal(deleteAuthorization, "Bearer previous-access-token");
+
+    const legacyReceipt = await server.database.prepare(`
+      INSERT INTO receipts (
+        receipt_date, si_or_number, particulars, amount_cents, custom_values,
+        created_by, created_by_name, onedrive_file_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "2026-10-23", "LEGACY-ACCOUNT-001", "Legacy OneDrive receipt", 1000, "{}",
+      admin.id, "System Administrator", "legacy-unassigned-file-id"
+    );
+    const refusedDelete = await fetch(`${baseUrl}/api/receipts/${legacyReceipt.lastInsertRowid}`, {
+      method: "DELETE",
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(refusedDelete.status, 502);
+    assert.match((await refusedDelete.json()).error, /receipt was kept/i);
+    assert.ok(await server.database.prepare("SELECT id FROM receipts WHERE id = ?").get(legacyReceipt.lastInsertRowid));
   } finally {
     global.fetch = originalFetch;
     await server.database.prepare("DELETE FROM onedrive_auth WHERE id = 1").run();
+    await server.database.prepare("DELETE FROM onedrive_accounts").run();
   }
 
   const imageBytes = 3 * 1024 * 1024 + 1;
@@ -692,6 +745,18 @@ test("custom field filters produce an Excel file with the matching records and c
     assert.equal(documentDownload.status, 200);
     assert.equal(documentDownload.headers.get("content-type"), "application/pdf");
     assert.match(documentDownload.headers.get("content-disposition"), /attachment; filename\*=UTF-8''supporting-document\.pdf/);
+    const savedReplacement = await server.database.prepare(
+      "SELECT image_url, onedrive_file_id FROM receipts WHERE si_or_number = ?"
+    ).get("IMAGE-001");
+    assert.equal(savedReplacement.image_url, "https://1drv.ms/i/s!replacement-link");
+    assert.equal(savedReplacement.onedrive_file_id, "replacement-document-id");
+    const deletedReceipt = await fetch(`${baseUrl}/api/receipts/${imageReceipt.lastInsertRowid}`, {
+      method: "DELETE",
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(deletedReceipt.status, 200);
+    assert.deepEqual(await deletedReceipt.json(), { deleted: true });
+    assert.equal(await server.database.prepare("SELECT id FROM receipts WHERE id = ?").get(imageReceipt.lastInsertRowid), undefined);
   } finally {
     global.fetch = originalFetch;
   }
@@ -701,11 +766,8 @@ test("custom field filters produce an Excel file with the matching records and c
     "bytes 0-12/13"
   ]);
   assert.ok(graphCalls.some((call) => call.url.endsWith("/test-file-id") && call.method === "DELETE"));
-  const savedReplacement = await server.database.prepare(
-    "SELECT image_url, onedrive_file_id FROM receipts WHERE si_or_number = ?"
-  ).get("IMAGE-001");
-  assert.equal(savedReplacement.image_url, "https://1drv.ms/i/s!replacement-link");
-  assert.equal(savedReplacement.onedrive_file_id, "replacement-document-id");
+  assert.ok(graphCalls.some((call) => call.url.endsWith("/replacement-document-id") && call.method === "DELETE"));
+  assert.ok(graphCalls.some((call) => call.url.endsWith("/replacement-document-id") && call.method === "DELETE"));
 });
 
 test("administrators cannot remove their last active administrator access", async () => {

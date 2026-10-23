@@ -348,7 +348,7 @@ function editReceipt(receipt) {
 }
 
 async function deleteReceipt(receipt) {
-  if (!window.confirm(`Delete receipt ${receipt.siOrNumber}? This cannot be undone.`)) return;
+  if (!window.confirm(`Delete receipt ${receipt.siOrNumber}? Its OneDrive attachment will also be moved to the OneDrive recycle bin. This cannot be undone here.`)) return;
   try {
     await api(`/api/receipts/${receipt.id}`, { method: "DELETE" });
     await loadReceipts(userHas("receipts:export"));

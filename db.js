@@ -62,6 +62,10 @@ const sqliteSchema = `
     id INTEGER PRIMARY KEY CHECK (id = 1), access_token TEXT NOT NULL, refresh_token TEXT NOT NULL,
     expires_at BIGINT NOT NULL, account_email TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS onedrive_accounts (
+    account_email TEXT PRIMARY KEY, access_token TEXT NOT NULL, refresh_token TEXT NOT NULL,
+    expires_at BIGINT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `;
 
 function translatePostgresQuery(sql, parameters) {
@@ -168,10 +172,17 @@ class ReceiptDatabase {
       );
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS image_url TEXT");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS onedrive_file_id TEXT");
+      await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS onedrive_account_email TEXT");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS attachment_name TEXT");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS attachment_type TEXT");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS particulars_category TEXT NOT NULL DEFAULT ''");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS particulars_detail TEXT NOT NULL DEFAULT ''");
+      await this.pool.query(`
+        INSERT INTO public.onedrive_accounts (account_email, access_token, refresh_token, expires_at)
+        SELECT LOWER(account_email), access_token, refresh_token, expires_at
+        FROM public.onedrive_auth WHERE id = 1
+        ON CONFLICT (account_email) DO NOTHING
+      `);
     } else {
       this.database.exec(sqliteSchema);
       const existingColumns = this.database.pragma("table_info(receipts)");
@@ -194,6 +205,7 @@ class ReceiptDatabase {
         ...migrations,
         ["image_url", "TEXT"],
         ["onedrive_file_id", "TEXT"],
+        ["onedrive_account_email", "TEXT"],
         ["attachment_name", "TEXT"],
         ["attachment_type", "TEXT"]
       ]) {
@@ -201,6 +213,11 @@ class ReceiptDatabase {
           this.database.exec(`ALTER TABLE receipts ADD COLUMN ${name} ${declaration}`);
         }
       }
+      this.database.exec(`
+        INSERT OR IGNORE INTO onedrive_accounts (account_email, access_token, refresh_token, expires_at)
+        SELECT LOWER(account_email), access_token, refresh_token, expires_at
+        FROM onedrive_auth WHERE id = 1
+      `);
     }
   }
 
