@@ -30,10 +30,8 @@ select { max-width: 100%; }
   background: #fff;
   border-bottom: 1px solid #edf1ee;
 }
-.brand { display: inline-flex; gap: 11px; align-items: center; color: var(--teal); text-decoration: none; font: 800 20px Manrope, sans-serif; letter-spacing: -.8px; }
-.brand-mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; background: var(--teal); color: white; }
-.brand-mark svg { width: 22px; height: 22px; }
-.brand-light { font-weight: 500; color: #66837a; }
+.brand { display: inline-flex; align-items: center; color: var(--teal); text-decoration: none; }
+.brand-logo { display: block; width: 44px; height: 46px; object-fit: contain; }
 .account-button { display: inline-flex; gap: 9px; align-items: center; border: 1px solid #dce7e1; background: #fff; border-radius: 9px; padding: 10px 14px; color: var(--teal); font-size: 13px; font-weight: 600; transition: background .2s, border-color .2s; }
 .account-button:hover { background: #f4f8f5; border-color: #b8cec4; }
 .account-button svg { width: 17px; height: 17px; }
@@ -141,8 +139,7 @@ input:focus, textarea:focus, select:focus { border-color: #6f9b88; box-shadow: 0
 
 @media (max-width: 760px) {
   .topbar { height: 66px; padding: 0 19px; }
-  .brand { gap: 8px; font-size: 18px; }
-  .brand-mark { width: 34px; height: 34px; }
+  .brand-logo { width: 38px; height: 40px; }
   .account-button { padding: 9px 10px; font-size: 12px; }
   .account-button { max-width: 165px; min-width: 0; }
   #session-button-label { max-width: 108px; }
@@ -173,6 +170,7 @@ body:not(.authenticated) { overflow: hidden; }
 .login-screen { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; overflow-y: auto; padding: 22px; background: linear-gradient(135deg, #edf4ef, #f7f8f5 52%, #e5f0e9); }
 .login-card { width: min(100%, 410px); padding: 33px; border: 1px solid #e6ede8; border-radius: 17px; background: #fff; box-shadow: 0 20px 65px rgba(30, 64, 49, .1); }
 .login-brand { margin-bottom: 35px; }
+.login-brand .brand-logo { width: 64px; height: 66px; }
 .login-card .eyebrow { margin-bottom: 7px; }
 .login-card h1 { margin: 0; color: var(--teal); font-size: 24px; letter-spacing: -.7px; }
 .login-copy { margin: 8px 0 24px; color: #75837e; font-size: 13px; line-height: 1.55; }
