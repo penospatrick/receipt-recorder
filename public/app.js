@@ -103,7 +103,7 @@ async function loadOneDriveStatus() {
     oneDriveConnectButton.disabled = false;
     oneDriveStatus.textContent = status.connected
       ? `Connected to ${status.accountEmail || "your corporate OneDrive account"}.`
-      : "Not connected. Connect the ZFC corporate account before uploading receipt photos.";
+      : "Not connected. Connect the ZFC corporate account before uploading receipt attachments.";
     oneDriveConnectButton.textContent = status.connected ? "Switch OneDrive account" : "Connect OneDrive";
   } catch (error) {
     oneDriveStatus.textContent = `Could not check connection: ${error.message}`;
@@ -219,24 +219,28 @@ function renderReceipts(receipts) {
     }
     detail.append(actions);
     item.append(main, detail);
-    if (receipt.hasImage) {
-      const imageLink = makeElement("a", "receipt-image-link");
-      try {
-        const imageUrl = new URL(receipt.imageUrl);
-        if (imageUrl.protocol === "https:") {
-          imageLink.href = imageUrl.href;
-          imageLink.target = "_blank";
-          imageLink.rel = "noopener noreferrer";
-        }
-      } catch (_error) {
-        imageLink.href = `/api/receipts/${receipt.id}/image`;
+    if (receipt.hasAttachment || receipt.hasImage) {
+      const attachmentType = receipt.attachmentType || (receipt.hasImage ? "image/jpeg" : "");
+      const attachmentName = receipt.attachmentName || "Receipt attachment";
+      const attachmentPath = `/api/receipts/${receipt.id}/image`;
+      if (attachmentType.startsWith("image/")) {
+        const imageLink = makeElement("a", "receipt-image-link");
+        imageLink.href = attachmentPath;
+        imageLink.target = "_blank";
+        imageLink.rel = "noopener noreferrer";
+        const image = makeElement("img", "receipt-image-thumbnail");
+        image.src = attachmentPath;
+        image.alt = `Receipt attachment ${attachmentName}`;
+        image.loading = "lazy";
+        imageLink.append(image);
+        item.append(imageLink);
+      } else {
+        const attachmentLink = makeElement("a", "receipt-file-link", `Open attachment: ${attachmentName}`);
+        attachmentLink.href = attachmentPath;
+        attachmentLink.target = "_blank";
+        attachmentLink.rel = "noopener noreferrer";
+        item.append(attachmentLink);
       }
-      const image = makeElement("img", "receipt-image-thumbnail");
-      image.src = `/api/receipts/${receipt.id}/image`;
-      image.alt = `Receipt image for ${receipt.siOrNumber}`;
-      image.loading = "lazy";
-      imageLink.append(image);
-      item.append(imageLink);
     }
     if (Object.keys(receipt.customValues || {}).length) {
       const custom = makeElement("div", "receipt-custom-preview");
@@ -309,7 +313,8 @@ async function loadReceipts(useExportFilters = false) {
 
 function setReceiptEditing(receipt = null) {
   appState.editingReceiptId = receipt?.id ?? null;
-  appState.editingReceiptHasImage = Boolean(receipt?.hasImage);
+  appState.editingReceiptHasImage = Boolean(receipt?.hasAttachment ?? receipt?.hasImage);
+  const hasAttachment = Boolean(receipt?.hasAttachment ?? receipt?.hasImage);
   document.querySelector("#save-button").innerHTML = receipt
     ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Update receipt'
     : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Save receipt';
@@ -318,13 +323,13 @@ function setReceiptEditing(receipt = null) {
   document.querySelector("#receipt-cancel-edit").hidden = !receipt;
   receiptImageInput.disabled = false;
   receiptImageInput.value = "";
-  document.querySelector("#receipt-image-label").textContent = receipt?.hasImage
-    ? "Replace receipt image (optional)"
-    : "Receipt image (optional)";
+  document.querySelector("#receipt-image-label").textContent = hasAttachment
+    ? "Replace receipt attachment (optional)"
+    : "Receipt attachment (optional)";
   const currentImage = document.querySelector("#receipt-image-current");
-  currentImage.hidden = !receipt?.hasImage;
-  currentImage.textContent = receipt?.hasImage
-    ? "A photo is already attached. Choose another image to replace it, or leave this empty to keep the current photo."
+  currentImage.hidden = !hasAttachment;
+  currentImage.textContent = hasAttachment
+    ? "A file is already attached. Choose another file to replace it, or leave this empty to keep the current attachment."
     : "";
 }
 
@@ -354,9 +359,11 @@ async function deleteReceipt(receipt) {
 
 async function uploadReceiptImageFile(file, receiptId, onProgress) {
   const maxBytes = 15 * 1024 * 1024;
-  if (file.size > maxBytes) throw new Error("Receipt images must be 15 MB or smaller.");
-  if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
-    throw new Error("Choose a JPG, PNG, WebP, or GIF image.");
+  const supportedExtensions = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv"];
+  const extension = `.${file.name.split(".").at(-1)}`.toLowerCase();
+  if (file.size > maxBytes) throw new Error("Receipt attachments must be 15 MB or smaller.");
+  if (!supportedExtensions.includes(extension)) {
+    throw new Error("Choose an image, PDF, Word, Excel, PowerPoint, TXT, or CSV file.");
   }
   const session = await api("/api/receipts/image-upload-sessions", {
     method: "POST",
@@ -383,10 +390,10 @@ async function uploadReceiptImageFile(file, receiptId, onProgress) {
       });
       const isLastChunk = end === file.size;
       if (isLastChunk && (!result.complete || !result.fileId)) {
-        throw new Error("OneDrive did not finish saving the image. Please try again.");
+        throw new Error("OneDrive did not finish saving the attachment. Please try again.");
       }
       if (!isLastChunk && result.complete) {
-        throw new Error("OneDrive finished the image upload unexpectedly. Please try again.");
+        throw new Error("OneDrive finished the attachment upload unexpectedly. Please try again.");
       }
       if (isLastChunk) fileId = result.fileId;
       onProgress(Math.round(end / file.size * 100));
@@ -400,7 +407,7 @@ async function uploadReceiptImageFile(file, receiptId, onProgress) {
         body: JSON.stringify({ uploadToken: session.uploadToken, fileId })
       });
     } catch (cleanupError) {
-      throw new Error(`${error.message} The incomplete image upload could not be cleaned up: ${cleanupError.message}`);
+      throw new Error(`${error.message} The incomplete attachment upload could not be cleaned up: ${cleanupError.message}`);
     }
     throw error;
   }
@@ -420,7 +427,7 @@ receiptForm.addEventListener("submit", async (event) => {
     if (receiptImageInput.files?.[0]) {
       const file = receiptImageInput.files[0];
       pendingImageUpload = await uploadReceiptImageFile(file, editingId, (percent) => {
-        button.textContent = `Uploading image (${percent}%)…`;
+        button.textContent = `Uploading attachment (${percent}%)…`;
       });
       Object.assign(payload, pendingImageUpload);
     }
@@ -441,9 +448,9 @@ receiptForm.addEventListener("submit", async (event) => {
       result.warning
         ? `Receipt updated, but ${result.warning}`
         : editingId
-          ? result.imageUpdated
-            ? "Receipt updated and image replaced."
-            : editingHasImage ? "Receipt updated. Existing image was kept." : "Receipt updated."
+          ? (result.attachmentUpdated ?? result.imageUpdated)
+            ? "Receipt updated and attachment replaced."
+            : editingHasImage ? "Receipt updated. Existing attachment was kept." : "Receipt updated."
           : "Receipt saved to the shared register."
     );
     await loadReceipts(userHas("receipts:export"));
@@ -457,7 +464,7 @@ receiptForm.addEventListener("submit", async (event) => {
           body: JSON.stringify(pendingImageUpload)
         });
       } catch (cleanupError) {
-        message += ` The uploaded image could not be cleaned up: ${cleanupError.message}`;
+        message += ` The uploaded attachment could not be cleaned up: ${cleanupError.message}`;
       }
     }
     showMessage(formMessage, message, true);
@@ -467,7 +474,7 @@ receiptForm.addEventListener("submit", async (event) => {
   } finally {
     button.disabled = false;
     setReceiptEditing(appState.editingReceiptId
-      ? { id: appState.editingReceiptId, hasImage: appState.editingReceiptHasImage }
+      ? { id: appState.editingReceiptId, hasImage: appState.editingReceiptHasImage, hasAttachment: appState.editingReceiptHasImage }
       : null);
   }
 });

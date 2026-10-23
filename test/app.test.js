@@ -101,6 +101,15 @@ test("login is required and user-group permissions isolate field-officer receipt
     const { id } = await created.json();
     if (username === "alice") aliceId = id;
   }
+  const duplicateUsername = await post("/api/admin/users", {
+    username: "ALICE",
+    displayName: "Duplicate Alice",
+    password: "Field-officer-password-02",
+    groupId: officerGroup.id
+  }, adminCookie);
+  assert.equal(duplicateUsername.status, 409);
+  assert.equal((await duplicateUsername.json()).error, "A user with this username already exists.");
+
   const accountant = await post("/api/admin/users", {
     username: "accountant",
     displayName: "Accounting Officer",
@@ -440,9 +449,9 @@ test("custom field filters produce an Excel file with the matching records and c
   const imageWorkbook = new ExcelJS.Workbook();
   await imageWorkbook.xlsx.load(Buffer.from(await imageExport.arrayBuffer()));
   const imageSheet = imageWorkbook.getWorksheet("Receipts");
-  assert.equal(imageSheet.getRow(1).getCell(8).value, "Receipt Image");
+  assert.equal(imageSheet.getRow(1).getCell(8).value, "Receipt Attachment");
   assert.deepEqual(imageSheet.getRow(2).getCell(8).value, {
-    text: "Open receipt image",
+    text: "Open receipt attachment",
     hyperlink: "https://1drv.ms/i/s!public-receipt-link"
   });
 
@@ -473,6 +482,8 @@ test("custom field filters produce an Excel file with the matching records and c
   const originalFetch = global.fetch;
   const graphCalls = [];
   const uploadSessions = new Map();
+  let userFolderCreated = false;
+  let activeFileId = "replacement-file-id";
   const chunkRanges = [];
   const chunkSize = 2.5 * 1024 * 1024;
   let completedFileSize = 0;
@@ -488,7 +499,7 @@ test("custom field filters produce an Excel file with the matching records and c
         const uploadedSize = Number(endText) - Number(startText) + 1;
         if (Number(endText) === total - 1) {
           completedFileSize = total;
-          return new Response(JSON.stringify({ id: "replacement-file-id" }), { status: 201 });
+          return new Response(JSON.stringify({ id: activeFileId }), { status: 201 });
         }
         assert.equal(uploadedSize, Number(options.headers["Content-Length"]));
         return new Response(JSON.stringify({ nextExpectedRanges: [`${Number(endText) + 1}-`] }), { status: 202 });
@@ -496,24 +507,36 @@ test("custom field filters produce an Excel file with the matching records and c
       return originalFetch(input, options);
     }
     graphCalls.push({ url, method: options.method || "GET" });
+    if (url.endsWith("/Receipt%20Uploads?$select=id,name,folder")) {
+      return new Response(JSON.stringify({ id: "receipt-folder", name: "Receipt Uploads", folder: {} }), { status: 200 });
+    }
+    if (url.endsWith("/Receipt%20Uploads/System%20Administrator?$select=id,name,folder")) {
+      if (!userFolderCreated) return new Response(null, { status: 404 });
+      return new Response(JSON.stringify({ id: "user-folder", name: "System Administrator", folder: {} }), { status: 200 });
+    }
+    if (url.endsWith("/drive/items/receipt-folder/children") && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      assert.equal(body.name, "System Administrator");
+      userFolderCreated = true;
+      return new Response(JSON.stringify({ id: "user-folder", name: body.name, folder: {} }), { status: 201 });
+    }
     if (url.endsWith("/createUploadSession")) {
+      assert.match(url, /\/drive\/items\/user-folder:\//);
       const fileName = decodeURIComponent(url.split("/createUploadSession")[0].split("/").at(-1).replace(/:$/, ""));
+      activeFileId = fileName.endsWith(".pdf") ? "replacement-document-id" : "replacement-file-id";
       uploadSessions.set("https://contoso.up.1drv.com/session", fileName);
       return new Response(JSON.stringify({
         uploadUrl: "https://contoso.up.1drv.com/session",
         expirationDateTime: new Date(Date.now() + 3600000).toISOString()
       }), { status: 200 });
     }
-    if (url.includes("/drive/items/replacement-file-id?")) {
+    if (url.includes(`/drive/items/${activeFileId}?`)) {
       return new Response(JSON.stringify({
-        id: "replacement-file-id",
+        id: activeFileId,
         name: uploadSessions.get("https://contoso.up.1drv.com/session"),
         size: completedFileSize,
-        parentReference: { path: "/drive/root:/Receipt Uploads" }
+        parentReference: { id: "user-folder", path: "/drive/root:/Receipt Uploads/System Administrator" }
       }), { status: 200 });
-    }
-    if (url.endsWith("/Receipt%20Uploads")) {
-      return new Response(JSON.stringify({ id: "receipt-folder" }), { status: 200 });
     }
     if (url.endsWith("/createLink")) {
       return new Response(JSON.stringify({
@@ -532,6 +555,14 @@ test("custom field filters produce an Excel file with the matching records and c
       receiptId: imageReceipt.lastInsertRowid
     }, adminCookie);
     assert.equal(tooLarge.status, 400);
+
+    const unsupportedType = await post("/api/receipts/image-upload-sessions", {
+      name: "program.exe",
+      type: "application/x-msdownload",
+      size: 12,
+      receiptId: imageReceipt.lastInsertRowid
+    }, adminCookie);
+    assert.equal(unsupportedType.status, 400);
 
     const maximumSessionResponse = await post("/api/receipts/image-upload-sessions", {
       name: "maximum.jpg",
@@ -586,20 +617,84 @@ test("custom field filters produce an Excel file with the matching records and c
       })
     });
     assert.equal(replacedImage.status, 200, await replacedImage.clone().text());
-    assert.deepEqual(await replacedImage.json(), { updated: true, imageUpdated: true, warning: null });
+    assert.deepEqual(await replacedImage.json(), {
+      updated: true,
+      attachmentUpdated: true,
+      imageUpdated: true,
+      warning: null
+    });
+
+    const pdfSize = 13;
+    const pdfSession = await json(await post("/api/receipts/image-upload-sessions", {
+      name: "supporting-document.pdf",
+      type: "application/pdf",
+      size: pdfSize,
+      receiptId: imageReceipt.lastInsertRowid
+    }, adminCookie));
+    assert.equal(activeFileId, "replacement-document-id");
+    const pdfContent = Buffer.from("%PDF-1.7 test");
+    assert.equal(pdfContent.length, pdfSize);
+    const pdfChunk = await fetch(`${baseUrl}/api/receipts/image-upload-chunks`, {
+      method: "PUT",
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-range": `bytes 0-${pdfSize - 1}/${pdfSize}`,
+        "x-receipt-upload-token": pdfSession.uploadToken,
+        cookie: adminCookie
+      },
+      body: pdfContent
+    });
+    assert.equal(pdfChunk.status, 200);
+    assert.equal((await pdfChunk.json()).fileId, "replacement-document-id");
+    const replacedWithPdf = await fetch(`${baseUrl}/api/receipts/${imageReceipt.lastInsertRowid}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: adminCookie },
+      body: JSON.stringify({
+        ...receiptUpdate,
+        imageUploadToken: pdfSession.uploadToken,
+        imageFileId: "replacement-document-id"
+      })
+    });
+    assert.equal(replacedWithPdf.status, 200, await replacedWithPdf.clone().text());
+    assert.deepEqual(await replacedWithPdf.json(), {
+      updated: true,
+      attachmentUpdated: true,
+      imageUpdated: true,
+      warning: null
+    });
+    const attachmentMetadata = await server.database.prepare(
+      "SELECT attachment_name, attachment_type FROM receipts WHERE id = ?"
+    ).get(imageReceipt.lastInsertRowid);
+    assert.deepEqual(attachmentMetadata, {
+      attachment_name: "supporting-document.pdf",
+      attachment_type: "application/pdf"
+    });
+    const receiptWithAttachment = await json(await fetch(`${baseUrl}/api/receipts?siOrNumber=IMAGE-001`, {
+      headers: { cookie: adminCookie }
+    }));
+    assert.equal(receiptWithAttachment.receipts[0].hasAttachment, true);
+    assert.equal(receiptWithAttachment.receipts[0].attachmentName, "supporting-document.pdf");
+    assert.equal(receiptWithAttachment.receipts[0].attachmentType, "application/pdf");
+    const documentDownload = await fetch(`${baseUrl}/api/receipts/${imageReceipt.lastInsertRowid}/image`, {
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(documentDownload.status, 200);
+    assert.equal(documentDownload.headers.get("content-type"), "application/pdf");
+    assert.match(documentDownload.headers.get("content-disposition"), /attachment; filename\*=UTF-8''supporting-document\.pdf/);
   } finally {
     global.fetch = originalFetch;
   }
   assert.deepEqual(chunkRanges, [
     `bytes 0-${chunkSize - 1}/${chunkSize + 1}`,
-    `bytes ${chunkSize}-${chunkSize}/${chunkSize + 1}`
+    `bytes ${chunkSize}-${chunkSize}/${chunkSize + 1}`,
+    "bytes 0-12/13"
   ]);
   assert.ok(graphCalls.some((call) => call.url.endsWith("/test-file-id") && call.method === "DELETE"));
   const savedReplacement = await server.database.prepare(
     "SELECT image_url, onedrive_file_id FROM receipts WHERE si_or_number = ?"
   ).get("IMAGE-001");
   assert.equal(savedReplacement.image_url, "https://1drv.ms/i/s!replacement-link");
-  assert.equal(savedReplacement.onedrive_file_id, "replacement-file-id");
+  assert.equal(savedReplacement.onedrive_file_id, "replacement-document-id");
 });
 
 test("administrators cannot remove their last active administrator access", async () => {
@@ -682,7 +777,7 @@ test("bulk user template and partial import enforce a first-sign-in password cha
   ]);
   assert.equal(importResult.results[0].row, 2);
   assert.equal(importResult.results[0].username, "bulkstaff");
-  assert.ok(importResult.results[1].message.includes("already in use"));
+  assert.ok(importResult.results[1].message.includes("already exists"));
   assert.ok(importResult.results[2].message.includes("existing group"));
 
   const importedLogin = await post("/api/auth/login", {

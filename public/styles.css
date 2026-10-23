@@ -104,6 +104,8 @@ input:focus, textarea:focus, select:focus { border-color: #6f9b88; box-shadow: 0
 .receipt-actions .table-action { margin: 0; padding: 3px 6px; font-size: 9px; }
 .receipt-image-link { display: inline-block; max-width: 100%; }
 .receipt-image-link:focus-visible { outline: 2px solid #397867; outline-offset: 3px; border-radius: 10px; }
+.receipt-file-link { display: inline-block; margin-top: 7px; color: #397867; font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
+.receipt-file-link:hover { color: var(--teal); text-decoration-thickness: 2px; }
 .receipt-custom-preview { display: flex; grid-column: 1 / -1; flex-wrap: wrap; gap: 5px 12px; color: #75857d; font-size: 10px; }
 .receipt-item { grid-template-columns: minmax(0, 1fr) auto; }
 .list-note { margin: 11px 0 0; color: #94a099; font-size: 11px; }

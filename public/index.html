@@ -70,9 +70,9 @@
               <span aria-hidden="true">₱</span>
               <input id="amount" name="amount" type="number" min="0.01" max="1000000000" step="0.01" inputmode="decimal" placeholder="0.00" required>
             </div>
-            <label for="receipt-image" id="receipt-image-label">Receipt image (optional)</label>
-            <input id="receipt-image" name="receiptImage" type="file" accept="image/*">
-            <p class="receipt-owner">Take a photo or choose an existing image from your files. JPG, PNG, WebP, or GIF; maximum 15 MB.</p>
+            <label for="receipt-image" id="receipt-image-label">Receipt attachment (optional)</label>
+            <input id="receipt-image" name="receiptImage" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv">
+            <p class="receipt-owner">Choose an image, PDF, Word, Excel, PowerPoint, TXT, or CSV file. Maximum 15 MB.</p>
             <p class="receipt-owner" id="receipt-image-current" hidden></p>
             <div id="custom-inputs"></div>
             <button class="primary-button" id="save-button" type="submit">
@@ -173,7 +173,7 @@
             <button class="admin-module-card" data-admin-open="onedrive" type="button">
               <span class="admin-module-icon" aria-hidden="true">04</span>
               <span class="admin-module-title">OneDrive</span>
-              <span class="admin-module-description">Connect the corporate account used to store receipt photos.</span>
+              <span class="admin-module-description">Connect the corporate account used to store receipt attachments.</span>
               <span class="admin-module-link">Manage OneDrive <span aria-hidden="true">→</span></span>
             </button>
             <button class="admin-module-card" data-admin-open="particulars" type="button">
@@ -188,15 +188,15 @@
               <button class="admin-back-button" data-admin-home type="button"><span aria-hidden="true">←</span> All admin modules</button>
               <div class="admin-section-heading">
                 <div>
-                  <h3>OneDrive receipt photos</h3>
-                  <p>Connect the ZFC work or school OneDrive account where receipt photos should be stored.</p>
+                  <h3>OneDrive receipt attachments</h3>
+                  <p>Connect the ZFC work or school OneDrive account where receipt attachments should be stored.</p>
                 </div>
               </div>
             </div>
             <div class="onedrive-connection-card">
               <p class="eyebrow">CONNECTION STATUS</p>
               <p id="onedrive-status" class="onedrive-status" role="status" aria-live="polite">Checking OneDrive connection…</p>
-              <p class="onedrive-help">Photos are stored in OneDrive, while receipt details and the sharing link are stored in the app database. Switching accounts makes the selected account the active storage account; existing photos remain in the previous account. Anonymous image links can be opened by anyone who has the link and require approval under your Microsoft 365 policy.</p>
+              <p class="onedrive-help">Attachments are stored in OneDrive, while receipt details and the sharing link are stored in the app database. Switching accounts makes the selected account the active storage account; existing attachments remain in the previous account. Anonymous links can be opened by anyone who has the link and require approval under your Microsoft 365 policy.</p>
               <button class="primary-button compact-button" id="onedrive-connect-button" type="button">Connect OneDrive</button>
             </div>
           </section>

@@ -47,7 +47,9 @@ CREATE TABLE IF NOT EXISTS public.receipts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ,
   image_url TEXT,
-  onedrive_file_id TEXT
+  onedrive_file_id TEXT,
+  attachment_name TEXT,
+  attachment_type TEXT
 );
 
 CREATE INDEX IF NOT EXISTS receipts_date_idx
@@ -81,6 +83,10 @@ ALTER TABLE public.receipts
   ADD COLUMN IF NOT EXISTS particulars_category TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.receipts
   ADD COLUMN IF NOT EXISTS particulars_detail TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.receipts
+  ADD COLUMN IF NOT EXISTS attachment_name TEXT;
+ALTER TABLE public.receipts
+  ADD COLUMN IF NOT EXISTS attachment_type TEXT;
 
 ALTER TABLE public.receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;

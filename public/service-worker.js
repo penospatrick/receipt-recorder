@@ -1,4 +1,4 @@
-const CACHE_NAME = "receipt-recorder-shell-v2";
+const CACHE_NAME = "receipt-recorder-shell-v3";
 const APP_SHELL = ["/", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

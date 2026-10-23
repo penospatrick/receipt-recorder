@@ -168,6 +168,8 @@ class ReceiptDatabase {
       );
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS image_url TEXT");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS onedrive_file_id TEXT");
+      await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS attachment_name TEXT");
+      await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS attachment_type TEXT");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS particulars_category TEXT NOT NULL DEFAULT ''");
       await this.pool.query("ALTER TABLE public.receipts ADD COLUMN IF NOT EXISTS particulars_detail TEXT NOT NULL DEFAULT ''");
     } else {
@@ -188,7 +190,13 @@ class ReceiptDatabase {
         ["created_by_name", "TEXT"],
         ["updated_at", "TEXT"]
       ];
-      for (const [name, declaration] of [...migrations, ["image_url", "TEXT"], ["onedrive_file_id", "TEXT"]]) {
+      for (const [name, declaration] of [
+        ...migrations,
+        ["image_url", "TEXT"],
+        ["onedrive_file_id", "TEXT"],
+        ["attachment_name", "TEXT"],
+        ["attachment_type", "TEXT"]
+      ]) {
         if (!existingColumns.some((column) => column.name === name)) {
           this.database.exec(`ALTER TABLE receipts ADD COLUMN ${name} ${declaration}`);
         }

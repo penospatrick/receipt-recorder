@@ -197,6 +197,52 @@ const MICROSOFT_AUTHORITY = "https://login.microsoftonline.com/organizations/oau
 const MAX_RECEIPT_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_RECEIPT_IMAGE_CHUNK_BYTES = 2.5 * 1024 * 1024;
 const MAX_LEGACY_RECEIPT_IMAGE_BYTES = 3 * 1024 * 1024;
+const receiptAttachmentTypes = new Map([
+  [".jpg", { type: "image/jpeg", acceptedTypes: ["image/jpeg"] }],
+  [".jpeg", { type: "image/jpeg", acceptedTypes: ["image/jpeg"] }],
+  [".png", { type: "image/png", acceptedTypes: ["image/png"] }],
+  [".webp", { type: "image/webp", acceptedTypes: ["image/webp"] }],
+  [".gif", { type: "image/gif", acceptedTypes: ["image/gif"] }],
+  [".pdf", { type: "application/pdf", acceptedTypes: ["application/pdf"] }],
+  [".doc", { type: "application/msword", acceptedTypes: ["application/msword"] }],
+  [".docx", {
+    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    acceptedTypes: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+  }],
+  [".xls", { type: "application/vnd.ms-excel", acceptedTypes: ["application/vnd.ms-excel"] }],
+  [".xlsx", {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    acceptedTypes: [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel"
+    ]
+  }],
+  [".ppt", { type: "application/vnd.ms-powerpoint", acceptedTypes: ["application/vnd.ms-powerpoint"] }],
+  [".pptx", {
+    type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    acceptedTypes: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"]
+  }],
+  [".txt", { type: "text/plain", acceptedTypes: ["text/plain"] }],
+  [".csv", { type: "text/csv", acceptedTypes: ["text/csv", "application/vnd.ms-excel"] }]
+]);
+const receiptAttachmentExtensions = [...receiptAttachmentTypes.keys()];
+
+function validateReceiptAttachment(name, type, size) {
+  if (!Number.isSafeInteger(size) || size < 1 || size > MAX_RECEIPT_IMAGE_BYTES) {
+    throw imageInputError("Receipt attachments must be 15 MB or smaller.");
+  }
+  if (typeof name !== "string" || !name.trim() || name.length > 255) {
+    throw imageInputError("Choose a valid attachment file.");
+  }
+  const extension = path.extname(name).toLowerCase();
+  const supported = receiptAttachmentTypes.get(extension);
+  if (!supported || (type && !supported.acceptedTypes.includes(type))) {
+    throw imageInputError(
+      `Choose a supported attachment (${receiptAttachmentExtensions.join(", ")}).`
+    );
+  }
+  return supported;
+}
 function imageInputError(message, statusCode = 400) {
   return Object.assign(new Error(message), { statusCode });
 }
@@ -240,18 +286,67 @@ async function graphRequest(pathname, options = {}) {
   return fetch(`https://graph.microsoft.com/v1.0${pathname}`, {...options, headers, cache:"no-store"});
 }
 async function ensureOneDriveReceiptFolder() {
-  const check = await graphRequest("/me/drive/root:/Receipt%20Uploads");
-  if (check.ok) return;
-  if (check.status !== 404) throw new Error(`Could not access OneDrive: ${await check.text()}`);
-  const created = await graphRequest("/me/drive/root/children", {method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({name:"Receipt Uploads",folder:{}, "@microsoft.graph.conflictBehavior":"fail"})});
-  if (!created.ok && created.status !== 409) throw new Error(`Could not create Receipt Uploads folder: ${await created.text()}`);
+  const path = "/me/drive/root:/Receipt%20Uploads?$select=id,name,folder";
+  let check = await graphRequest(path);
+  if (check.status === 404) {
+    const created = await graphRequest("/me/drive/root/children", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Receipt Uploads",
+        folder: {},
+        "@microsoft.graph.conflictBehavior": "fail"
+      })
+    });
+    if (created.status !== 409 && !created.ok) {
+      throw new Error(`Could not create Receipt Uploads folder: ${await created.text()}`);
+    }
+    check = created.status === 409 ? await graphRequest(path) : created;
+  }
+  const folder = await check.json().catch(() => ({}));
+  if (!check.ok || typeof folder.id !== "string" || !folder.folder) {
+    throw new Error(`Could not access the OneDrive Receipt Uploads folder: ${folder.error?.message || "Microsoft did not return a valid folder."}`);
+  }
+  return folder.id;
+}
+function oneDriveFolderName(displayName) {
+  const safeName = displayName
+    .replace(/[~"#%&*:<>?\/\\{|}]/g, "-")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  if (!safeName) throw imageInputError("Your full name cannot be used as a OneDrive folder name.");
+  return safeName.slice(0, 80);
+}
+async function ensureOneDriveUserReceiptFolder(displayName) {
+  const rootFolderId = await ensureOneDriveReceiptFolder();
+  const folderName = oneDriveFolderName(displayName);
+  const folderPath = `/me/drive/root:/Receipt%20Uploads/${encodeURIComponent(folderName)}?$select=id,name,folder`;
+  let check = await graphRequest(folderPath);
+  if (check.status === 404) {
+    const created = await graphRequest(`/me/drive/items/${encodeURIComponent(rootFolderId)}/children`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: folderName,
+        folder: {},
+        "@microsoft.graph.conflictBehavior": "fail"
+      })
+    });
+    if (created.status !== 409 && !created.ok) {
+      throw new Error(`Could not create the OneDrive folder for ${displayName}: ${await created.text()}`);
+    }
+    check = created.status === 409 ? await graphRequest(folderPath) : created;
+  }
+  const folder = await check.json().catch(() => ({}));
+  if (!check.ok || typeof folder.id !== "string" || !folder.folder || folder.name !== folderName) {
+    throw new Error(`Could not access the OneDrive folder for ${displayName}: ${folder.error?.message || "Microsoft did not return the expected folder."}`);
+  }
+  return { id: folder.id, name: folderName };
 }
 async function deleteOneDriveReceiptFile(fileId) {
   const response = await graphRequest(`/me/drive/items/${encodeURIComponent(fileId)}`, { method: "DELETE" });
   if (!response.ok && response.status !== 404) {
-    throw new Error(`Could not remove the unused OneDrive image: ${await response.text()}`);
+    throw new Error(`Could not remove the unused OneDrive attachment: ${await response.text()}`);
   }
 }
 function signReceiptImageUploadToken(payload) {
@@ -260,28 +355,28 @@ function signReceiptImageUploadToken(payload) {
   return `${encoded}.${signature}`;
 }
 function readReceiptImageUploadToken(token, userId) {
-  if (typeof token !== "string") throw imageInputError("The image upload session is invalid. Please choose the image again.");
+  if (typeof token !== "string") throw imageInputError("The attachment upload session is invalid. Please choose the file again.");
   const [encoded, signature] = token.split(".");
-  if (!encoded || !signature) throw imageInputError("The image upload session is invalid. Please choose the image again.");
+  if (!encoded || !signature) throw imageInputError("The attachment upload session is invalid. Please choose the file again.");
   const expected = crypto.createHmac("sha256", sessionSecret).update(encoded).digest();
   let actual;
   try {
     actual = Buffer.from(signature, "base64url");
   } catch {
-    throw imageInputError("The image upload session is invalid. Please choose the image again.");
+    throw imageInputError("The attachment upload session is invalid. Please choose the file again.");
   }
   if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
-    throw imageInputError("The image upload session is invalid. Please choose the image again.");
+    throw imageInputError("The attachment upload session is invalid. Please choose the file again.");
   }
   let payload;
   try {
     payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
   } catch {
-    throw imageInputError("The image upload session is invalid. Please choose the image again.");
+    throw imageInputError("The attachment upload session is invalid. Please choose the file again.");
   }
-  if (payload.userId !== userId) throw imageInputError("This image upload session belongs to another user.", 403);
+  if (payload.userId !== userId) throw imageInputError("This attachment upload session belongs to another user.", 403);
   if (!Number.isSafeInteger(payload.expiresAt) || payload.expiresAt <= Date.now()) {
-    throw imageInputError("The image upload session expired. Please choose the image again.");
+    throw imageInputError("The attachment upload session expired. Please choose the file again.");
   }
   return payload;
 }
@@ -290,15 +385,7 @@ async function createReceiptImageUploadSession(request) {
   const receiptId = request.body?.receiptId === null || request.body?.receiptId === undefined
     ? null
     : Number(request.body.receiptId);
-  if (!Number.isSafeInteger(size) || size < 1 || size > MAX_RECEIPT_IMAGE_BYTES) {
-    throw imageInputError("Receipt images must be 15 MB or smaller.");
-  }
-  if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(type)) {
-    throw imageInputError("Choose a JPG, PNG, WebP, or GIF image.");
-  }
-  if (typeof name !== "string" || !name.trim() || name.length > 255) {
-    throw imageInputError("Choose a valid image file.");
-  }
+  const attachment = validateReceiptAttachment(name, type, size);
   if (receiptId === null) {
     if (!request.user.permissions.includes("receipts:create")) {
       throw imageInputError("Your user group cannot create receipts.", 403);
@@ -318,11 +405,11 @@ async function createReceiptImageUploadSession(request) {
   if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) {
     throw imageInputError("Microsoft OneDrive credentials are not configured on the server.", 503);
   }
-  await ensureOneDriveReceiptFolder();
+  const folder = await ensureOneDriveUserReceiptFolder(request.user.displayName);
   const safeName = name.replace(/[^A-Za-z0-9._-]/g, "_").slice(-90) || "receipt-image";
   const filename = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
   const sessionResponse = await graphRequest(
-    `/me/drive/root:/Receipt%20Uploads/${encodeURIComponent(filename)}:/createUploadSession`,
+    `/me/drive/items/${encodeURIComponent(folder.id)}:/${encodeURIComponent(filename)}:/createUploadSession`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -331,7 +418,7 @@ async function createReceiptImageUploadSession(request) {
   );
   const session = await sessionResponse.json().catch(() => ({}));
   if (!sessionResponse.ok || typeof session.uploadUrl !== "string") {
-    throw new Error(session.error?.message || "Could not start a OneDrive image upload.");
+    throw new Error(session.error?.message || "Could not start a OneDrive attachment upload.");
   }
   const expiresAt = Date.parse(session.expirationDateTime);
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) {
@@ -340,8 +427,10 @@ async function createReceiptImageUploadSession(request) {
   const uploadToken = signReceiptImageUploadToken({
     uploadUrl: session.uploadUrl,
     fileName: filename,
+    originalName: name.trim(),
+    folderId: folder.id,
     size,
-    type,
+    type: attachment.type,
     userId: request.user.id,
     receiptId,
     expiresAt
@@ -360,7 +449,7 @@ async function createOneDriveReceiptImageLink(fileId) {
       const details = sharingResult.error?.message;
       throw new Error(`Could not create an anonymous OneDrive link. Check the Microsoft 365 Anyone-link policy and Graph permissions.${details ? ` Microsoft says: ${details}` : ""}`);
     }
-    throw new Error(sharingResult.error?.message || "Could not create a public OneDrive image link.");
+    throw new Error(sharingResult.error?.message || "Could not create a OneDrive attachment link.");
   }
   const imageUrl = sharingResult.link?.webUrl;
   if (typeof imageUrl !== "string" || !imageUrl.startsWith("https://")) {
@@ -371,27 +460,31 @@ async function createOneDriveReceiptImageLink(fileId) {
 async function completeReceiptImageUpload(uploadToken, fileId, userId, receiptId) {
   const session = readReceiptImageUploadToken(uploadToken, userId);
   if (session.receiptId !== receiptId) {
-    throw imageInputError("The image upload session does not match this receipt.", 400);
+    throw imageInputError("The attachment upload session does not match this receipt.", 400);
   }
   if (typeof fileId !== "string" || !fileId || fileId.length > 1024) {
-    throw imageInputError("The uploaded OneDrive image could not be identified.");
+    throw imageInputError("The uploaded OneDrive file could not be identified.");
   }
   const itemResponse = await graphRequest(
     `/me/drive/items/${encodeURIComponent(fileId)}?$select=id,name,size,parentReference`
   );
   const item = await itemResponse.json().catch(() => ({}));
-  const parentPath = item.parentReference?.path;
   if (!itemResponse.ok || item.name !== session.fileName || Number(item.size) !== session.size ||
-      typeof parentPath !== "string" || !parentPath.endsWith("/Receipt Uploads")) {
-    throw imageInputError("The uploaded image could not be verified in the Receipt Uploads folder.");
+      item.parentReference?.id !== session.folderId) {
+    throw imageInputError("The uploaded file could not be verified in your OneDrive folder.");
   }
   const existingReceipt = await database.prepare(
     "SELECT id FROM receipts WHERE onedrive_file_id = ? AND id != COALESCE(?, -1)"
   ).get(fileId, receiptId);
-  if (existingReceipt) throw imageInputError("This uploaded image is already attached to another receipt.");
+  if (existingReceipt) throw imageInputError("This uploaded file is already attached to another receipt.");
   try {
     const webUrl = await createOneDriveReceiptImageLink(fileId);
-    return { fileId, webUrl };
+    return {
+      fileId,
+      webUrl,
+      name: session.originalName,
+      type: session.type
+    };
   } catch (error) {
     try {
       await deleteOneDriveReceiptFile(fileId);
@@ -414,7 +507,7 @@ async function uploadReceiptImageChunk(request, response) {
   const match = typeof range === "string" && range.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
   const body = request.body;
   if (!match || !Buffer.isBuffer(body)) {
-    return response.status(400).json({ error: "The image upload chunk is invalid." });
+    return response.status(400).json({ error: "The attachment upload chunk is invalid." });
   }
   const start = Number(match[1]);
   const end = Number(match[2]);
@@ -424,7 +517,7 @@ async function uploadReceiptImageChunk(request, response) {
       chunkLength !== body.length || chunkLength > MAX_RECEIPT_IMAGE_CHUNK_BYTES ||
       (start !== 0 && start % MAX_RECEIPT_IMAGE_CHUNK_BYTES !== 0) ||
       (end !== total - 1 && chunkLength !== MAX_RECEIPT_IMAGE_CHUNK_BYTES)) {
-    return response.status(400).json({ error: "The image upload chunk range is invalid." });
+    return response.status(400).json({ error: "The attachment upload chunk range is invalid." });
   }
   try {
     const upload = await fetch(session.uploadUrl, {
@@ -439,17 +532,17 @@ async function uploadReceiptImageChunk(request, response) {
     });
     const result = await upload.json().catch(() => ({}));
     if (!upload.ok && upload.status !== 202) {
-      return response.status(502).json({ error: result.error?.message || "OneDrive could not accept the image upload chunk." });
+      return response.status(502).json({ error: result.error?.message || "OneDrive could not accept the attachment upload chunk." });
     }
     response.json({
       complete: upload.status !== 202 && typeof result.id === "string",
       fileId: typeof result.id === "string" ? result.id : null
     });
   } catch (error) {
-    response.status(502).json({ error: error instanceof Error ? error.message : "Could not send image chunk to OneDrive." });
+    response.status(502).json({ error: error instanceof Error ? error.message : "Could not send attachment chunk to OneDrive." });
   }
 }
-async function uploadReceiptImage(dataUrl, originalName) {
+async function uploadReceiptImage(dataUrl, originalName, displayName) {
   if (typeof dataUrl !== "string") return null;
   const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
   if (!match) throw imageInputError("Choose a valid JPG, PNG, WebP, or GIF image.");
@@ -458,13 +551,13 @@ async function uploadReceiptImage(dataUrl, originalName) {
   if (!process.env.MICROSOFT_CLIENT_ID || !process.env.MICROSOFT_CLIENT_SECRET) {
     throw imageInputError("Microsoft OneDrive credentials are not configured on the server.", 503);
   }
-  await ensureOneDriveReceiptFolder();
+  const folder = await ensureOneDriveUserReceiptFolder(displayName);
   const safeName = String(originalName || "receipt-image").replace(/[^A-Za-z0-9._-]/g, "_").slice(-90) || "receipt-image";
   const filename = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
-  const upload = await graphRequest(`/me/drive/root:/Receipt%20Uploads/${encodeURIComponent(filename)}:/content`,
+  const upload = await graphRequest(`/me/drive/items/${encodeURIComponent(folder.id)}:/${encodeURIComponent(filename)}:/content`,
     {method:"PUT",headers:{"Content-Type":match[1]},body:buffer});
   const file = await upload.json();
-  if (!upload.ok) throw new Error(file.error?.message || "OneDrive image upload failed.");
+  if (!upload.ok) throw new Error(file.error?.message || "OneDrive attachment upload failed.");
   if (typeof file.id !== "string" || !file.id) throw new Error("OneDrive did not return an uploaded file ID.");
   try {
     const sharing = await graphRequest(`/me/drive/items/${encodeURIComponent(file.id)}/createLink`, {
@@ -478,13 +571,18 @@ async function uploadReceiptImage(dataUrl, originalName) {
         const details = sharingResult.error?.message;
         throw new Error(`Could not create an anonymous OneDrive link. Check the Microsoft 365 Anyone-link policy and Graph permissions.${details ? ` Microsoft says: ${details}` : ""}`);
       }
-      throw new Error(sharingResult.error?.message || "Could not create a public OneDrive image link.");
+      throw new Error(sharingResult.error?.message || "Could not create a OneDrive attachment link.");
     }
     const imageUrl = sharingResult.link?.webUrl;
     if (typeof imageUrl !== "string" || !imageUrl.startsWith("https://")) {
       throw new Error("Microsoft did not return a valid OneDrive sharing link.");
     }
-    return {fileId:file.id,webUrl:imageUrl};
+    const type = match[1];
+    const extension = type === "image/jpeg" ? ".jpg" : type === "image/png" ? ".png" :
+      type === "image/webp" ? ".webp" : ".gif";
+    const name = path.basename(String(originalName || `receipt${extension}`))
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 180);
+    return { fileId: file.id, webUrl: imageUrl, name: name || `receipt${extension}`, type };
   } catch (error) {
     try {
       await deleteOneDriveReceiptFile(file.id);
@@ -704,6 +802,7 @@ async function getReceiptRows(filters) {
     SELECT r.id, CAST(r.receipt_date AS TEXT) AS receipt_date,
       r.si_or_number, r.particulars, r.particulars_category, r.particulars_detail, r.amount_cents,
       r.custom_values, r.created_by, r.created_at, r.image_url, r.onedrive_file_id,
+      r.attachment_name, r.attachment_type,
       COALESCE(u.display_name, r.created_by_name) AS creator_name
     FROM receipts r
     LEFT JOIN users u ON u.id = r.created_by
@@ -930,7 +1029,7 @@ app.post("/api/receipts/image-upload-sessions", requireAuth, async (request, res
     response.status(201).json(session);
   } catch (error) {
     const statusCode = [400, 403, 404, 503].includes(error?.statusCode) ? error.statusCode : 502;
-    response.status(statusCode).json({ error: error instanceof Error ? error.message : "Could not start the OneDrive image upload." });
+    response.status(statusCode).json({ error: error instanceof Error ? error.message : "Could not start the OneDrive attachment upload." });
   }
 });
 
@@ -947,7 +1046,7 @@ app.delete("/api/receipts/image-upload-sessions", requireAuth, async (request, r
     if (request.body?.fileId) {
       const fileId = request.body.fileId;
       if (typeof fileId !== "string" || fileId.length > 1024) {
-        return response.status(400).json({ error: "The uploaded OneDrive image could not be identified." });
+        return response.status(400).json({ error: "The uploaded OneDrive attachment could not be identified." });
       }
       const itemResponse = await graphRequest(
         `/me/drive/items/${encodeURIComponent(fileId)}?$select=id,name,size,parentReference`
@@ -959,21 +1058,20 @@ app.delete("/api/receipts/image-upload-sessions", requireAuth, async (request, r
       ).get(fileId);
       if (attachedReceipt) return response.json({ cancelled: true, attached: true });
       if (!itemResponse.ok || item.name !== session.fileName ||
-          typeof item.parentReference?.path !== "string" ||
-          !item.parentReference.path.endsWith("/Receipt Uploads")) {
+          item.parentReference?.id !== session.folderId) {
         return response.status(400).json({ error: "The uploaded image could not be verified for cleanup." });
       }
       await deleteOneDriveReceiptFile(fileId);
     } else {
       const cancelled = await fetch(session.uploadUrl, { method: "DELETE", cache: "no-store", redirect: "error" });
       if (!cancelled.ok && cancelled.status !== 404 && cancelled.status !== 410) {
-        return response.status(502).json({ error: "Could not cancel the incomplete OneDrive image upload." });
+        return response.status(502).json({ error: "Could not cancel the incomplete OneDrive attachment upload." });
       }
     }
     response.json({ cancelled: true });
   } catch (error) {
     const statusCode = [400, 403].includes(error?.statusCode) ? error.statusCode : 502;
-    response.status(statusCode).json({ error: error instanceof Error ? error.message : "Could not clean up the OneDrive image upload." });
+    response.status(statusCode).json({ error: error instanceof Error ? error.message : "Could not clean up the OneDrive attachment upload." });
   }
 });
 
@@ -1099,6 +1197,9 @@ app.get("/api/receipts", requireAuth, async (request, response) => {
     customValues: JSON.parse(row.custom_values),
     imageUrl: row.image_url,
     hasImage: Boolean(row.onedrive_file_id),
+    hasAttachment: Boolean(row.onedrive_file_id),
+    attachmentName: row.attachment_name,
+    attachmentType: row.attachment_type,
     createdBy: row.created_by,
     creatorName: row.creator_name,
     createdAt: row.created_at,
@@ -1130,58 +1231,79 @@ app.post("/api/receipts", requirePermission("receipts:create"), async (request, 
         request.body.imageUploadToken, request.body.imageFileId, request.user.id, null
       );
     } else if (request.body?.imageData) {
-      uploadedImage = await uploadReceiptImage(request.body.imageData, request.body.imageName);
+      uploadedImage = await uploadReceiptImage(request.body.imageData, request.body.imageName, request.user.displayName);
     }
     const result = await database.prepare(`
-      INSERT INTO receipts (receipt_date, si_or_number, particulars, particulars_category, particulars_detail, amount_cents, custom_values, created_by, created_by_name, image_url, onedrive_file_id)
-      VALUES (@date, @si_or_number, @particulars, @particulars_category, @particulars_detail, @amount_cents, @custom_values, @created_by, @created_by_name, @image_url, @onedrive_file_id)
+      INSERT INTO receipts (
+        receipt_date, si_or_number, particulars, particulars_category, particulars_detail,
+        amount_cents, custom_values, created_by, created_by_name, image_url, onedrive_file_id,
+        attachment_name, attachment_type
+      )
+      VALUES (
+        @date, @si_or_number, @particulars, @particulars_category, @particulars_detail,
+        @amount_cents, @custom_values, @created_by, @created_by_name, @image_url, @onedrive_file_id,
+        @attachment_name, @attachment_type
+      )
     `).run({
       date, si_or_number: siOrNumber.trim(), particulars: particularsResult.particulars,
       particulars_category: particularsResult.category, particulars_detail: particularsResult.detail,
       amount_cents: Math.round(amountNumber * 100), custom_values: JSON.stringify(customResult.values),
       created_by: request.user.id, created_by_name: request.user.displayName,
-      image_url: uploadedImage?.webUrl || null, onedrive_file_id: uploadedImage?.fileId || null
+      image_url: uploadedImage?.webUrl || null,
+      onedrive_file_id: uploadedImage?.fileId || null,
+      attachment_name: uploadedImage?.name || null,
+      attachment_type: uploadedImage?.type || null
     });
-    response.status(201).json({id:Number(result.lastInsertRowid),imageUrl:uploadedImage?.webUrl || null});
+    response.status(201).json({ id: Number(result.lastInsertRowid), imageUrl: uploadedImage?.webUrl || null });
   } catch (error) {
     if (uploadedImage?.fileId) {
       try {
         await deleteOneDriveReceiptFile(uploadedImage.fileId);
       } catch (cleanupError) {
-        console.error("Could not clean up OneDrive image after receipt save failure:", cleanupError);
+        console.error("Could not clean up OneDrive attachment after receipt save failure:", cleanupError);
         return response.status(502).json({
-          error: "Could not save the receipt or remove its uploaded OneDrive image. Contact an administrator."
+          error: "Could not save the receipt or remove its uploaded OneDrive attachment. Contact an administrator."
         });
       }
     }
     const statusCode = error?.statusCode === 400 || error?.statusCode === 503 ? error.statusCode : 502;
-    response.status(statusCode).json({error:error instanceof Error ? error.message : "Could not save receipt image."});
+    response.status(statusCode).json({error:error instanceof Error ? error.message : "Could not save receipt attachment."});
   }
 });
 
 app.get("/api/receipts/:id/image", requireAuth, async (request, response) => {
   const id = Number(request.params.id);
   if (!Number.isSafeInteger(id) || id <= 0) return response.status(400).json({error:"Select a valid receipt."});
-  const receipt = await database.prepare("SELECT id, created_by, onedrive_file_id FROM receipts WHERE id = ?").get(id);
-  if (!receipt?.onedrive_file_id) return response.status(404).json({error:"No image is attached to this receipt."});
+  const receipt = await database.prepare(`
+    SELECT id, created_by, onedrive_file_id, attachment_name, attachment_type
+    FROM receipts WHERE id = ?
+  `).get(id);
+  if (!receipt?.onedrive_file_id) return response.status(404).json({error:"No attachment is attached to this receipt."});
   if (!userCan("receipts:read_own", receipt, request.user)) {
-    return response.status(403).json({error:"Your user group cannot view this receipt image."});
+    return response.status(403).json({error:"Your user group cannot view this receipt attachment."});
   }
   try {
-    const image = await graphRequest(`/me/drive/items/${encodeURIComponent(receipt.onedrive_file_id)}/content`);
-    if (!image.ok) return response.status(502).json({error:"Could not load image from OneDrive."});
-    response.setHeader("Content-Type", image.headers.get("content-type") || "application/octet-stream");
+    const file = await graphRequest(`/me/drive/items/${encodeURIComponent(receipt.onedrive_file_id)}/content`);
+    if (!file.ok) return response.status(502).json({error:"Could not load attachment from OneDrive."});
+    const contentType = receipt.attachment_type || file.headers.get("content-type") || "application/octet-stream";
+    const isImage = contentType.startsWith("image/");
+    const name = (receipt.attachment_name || "receipt-attachment")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+    response.setHeader("Content-Type", contentType);
+    response.setHeader("Content-Disposition", isImage
+      ? "inline"
+      : `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
     response.setHeader("Cache-Control","private, no-store");
     response.setHeader("X-Content-Type-Options","nosniff");
-    response.send(Buffer.from(await image.arrayBuffer()));
-  } catch (error) { response.status(502).json({error:error instanceof Error ? error.message : "Could not load image."}); }
+    response.send(Buffer.from(await file.arrayBuffer()));
+  } catch (error) { response.status(502).json({error:error instanceof Error ? error.message : "Could not load attachment."}); }
 });
 
 app.put("/api/receipts/:id", requireAuth, async (request, response) => {
   const receiptId = Number(request.params.id);
   if (!Number.isSafeInteger(receiptId) || receiptId <= 0) return response.status(400).json({ error: "Select a valid receipt." });
   const receipt = await database.prepare(`
-    SELECT id, created_by, image_url, onedrive_file_id, particulars_category
+    SELECT id, created_by, image_url, onedrive_file_id, attachment_name, attachment_type, particulars_category
     FROM receipts WHERE id = ?
   `).get(receiptId);
   if (!receipt) return response.status(404).json({ error: "Receipt not found." });
@@ -1208,7 +1330,7 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
         request.body.imageUploadToken, request.body.imageFileId, request.user.id, receiptId
       );
     } else if (request.body?.imageData) {
-      uploadedImage = await uploadReceiptImage(request.body.imageData, request.body.imageName);
+      uploadedImage = await uploadReceiptImage(request.body.imageData, request.body.imageName, request.user.displayName);
     }
     await database.prepare(`
       UPDATE receipts
@@ -1217,6 +1339,8 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
         amount_cents = @amount_cents, custom_values = @custom_values,
         image_url = COALESCE(@image_url, image_url),
         onedrive_file_id = COALESCE(@onedrive_file_id, onedrive_file_id),
+        attachment_name = COALESCE(@attachment_name, attachment_name),
+        attachment_type = COALESCE(@attachment_type, attachment_type),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = @id
     `).run({
@@ -1229,7 +1353,9 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
       amount_cents: Math.round(amountNumber * 100),
       custom_values: JSON.stringify(customResult.values),
       image_url: uploadedImage?.webUrl || null,
-      onedrive_file_id: uploadedImage?.fileId || null
+      onedrive_file_id: uploadedImage?.fileId || null,
+      attachment_name: uploadedImage?.name || null,
+      attachment_type: uploadedImage?.type || null
     });
 
     let warning = null;
@@ -1237,24 +1363,29 @@ app.put("/api/receipts/:id", requireAuth, async (request, response) => {
       try {
         await deleteOneDriveReceiptFile(receipt.onedrive_file_id);
       } catch (error) {
-        console.error("Could not remove replaced OneDrive receipt image:", error);
+        console.error("Could not remove replaced OneDrive receipt attachment:", error);
         warning = "the previous OneDrive photo could not be deleted. Contact an administrator to remove the unused file.";
       }
     }
-    response.json({ updated: true, imageUpdated: Boolean(uploadedImage), warning });
+    response.json({
+      updated: true,
+      attachmentUpdated: Boolean(uploadedImage),
+      imageUpdated: Boolean(uploadedImage),
+      warning
+    });
   } catch (error) {
     if (uploadedImage?.fileId) {
       try {
         await deleteOneDriveReceiptFile(uploadedImage.fileId);
       } catch (cleanupError) {
-        console.error("Could not clean up replacement OneDrive image after receipt update failure:", cleanupError);
+        console.error("Could not clean up replacement OneDrive attachment after receipt update failure:", cleanupError);
         return response.status(502).json({
-          error: "Could not update the receipt or remove its new OneDrive image. Contact an administrator."
+          error: "Could not update the receipt or remove its new OneDrive attachment. Contact an administrator."
         });
       }
     }
     const statusCode = error?.statusCode === 400 || error?.statusCode === 503 ? error.statusCode : 502;
-    response.status(statusCode).json({ error: error instanceof Error ? error.message : "Could not update receipt image." });
+    response.status(statusCode).json({ error: error instanceof Error ? error.message : "Could not update receipt attachment." });
   }
 });
 
@@ -1269,7 +1400,7 @@ app.delete("/api/receipts/:id", requireAuth, async (request, response) => {
   if (receipt.onedrive_file_id) {
     try {
       await deleteOneDriveReceiptFile(receipt.onedrive_file_id);
-    } catch (error) { return response.status(502).json({error:error instanceof Error ? error.message : "Could not delete the OneDrive image."}); }
+    } catch (error) { return response.status(502).json({error:error instanceof Error ? error.message : "Could not delete the OneDrive attachment."}); }
   }
   await database.prepare("DELETE FROM receipts WHERE id = ?").run(receiptId);
   response.json({ deleted: true });
@@ -1302,6 +1433,9 @@ app.post("/api/admin/users", requirePermission("users:manage"), async (request, 
   const groupId = Number(request.body?.groupId);
   if (!/^[A-Za-z0-9._-]{3,40}$/.test(username)) return response.status(400).json({ error: "Username must be 3–40 characters: letters, numbers, dots, dashes, or underscores." });
   if (!displayName || displayName.length > 80) return response.status(400).json({ error: "Enter a display name of 1–80 characters." });
+  if (await database.prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE").get(username)) {
+    return response.status(409).json({ error: "A user with this username already exists." });
+  }
   if (password.length < 10 || password.length > 200) return response.status(400).json({ error: "New passwords must be at least 10 characters and no more than 200 characters." });
   if (!Number.isSafeInteger(groupId) || !await database.prepare("SELECT id FROM groups WHERE id = ?").get(groupId)) {
     return response.status(400).json({ error: "Choose a valid user group." });
@@ -1314,7 +1448,9 @@ app.post("/api/admin/users", requirePermission("users:manage"), async (request, 
     `).run(username, displayName, credentials.salt, credentials.hash, groupId);
     response.status(201).json({ id: Number(result.lastInsertRowid) });
   } catch (error) {
-    if (error.code === "SQLITE_CONSTRAINT_UNIQUE" || error.code === "23505") return response.status(409).json({ error: "That username is already in use." });
+    if (error.code === "SQLITE_CONSTRAINT_UNIQUE" || error.code === "23505") {
+      return response.status(409).json({ error: "A user with this username already exists." });
+    }
     throw error;
   }
 });
@@ -1426,7 +1562,7 @@ app.post(
       if (!/^[A-Za-z0-9._-]{3,40}$/.test(username)) {
         error = "Username must be 3–40 letters, numbers, dots, dashes, or underscores.";
       } else if (usedUsernames.has(username.toLowerCase())) {
-        error = "Username is already in use or duplicated in this file.";
+        error = "A user with this username already exists or is duplicated in this file.";
       } else if (!displayName || displayName.length > 80) {
         error = "Full Name must be 1–80 characters.";
       } else if (!group) {
@@ -1446,7 +1582,7 @@ app.post(
           usedUsernames.add(username.toLowerCase());
         } catch (insertError) {
           if (insertError.code === "SQLITE_CONSTRAINT_UNIQUE" || insertError.code === "23505") {
-            error = "Username is already in use or duplicated in this file.";
+            error = "A user with this username already exists or is duplicated in this file.";
           } else {
             throw insertError;
           }
@@ -1731,7 +1867,7 @@ app.get("/api/receipts/export.xlsx", requirePermission("receipts:export"), async
     sheet.columns = [
       ...baseColumns,
       ...customColumns,
-      { header: "Receipt Image", key: "imageLink", width: 24 }
+      { header: "Receipt Attachment", key: "imageLink", width: 24 }
     ];
     sheet.autoFilter = `A1:${sheet.getColumn(sheet.columnCount).letter}${Math.max(1, receipts.length + 1)}`;
     sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -1746,7 +1882,7 @@ app.get("/api/receipts/export.xlsx", requirePermission("receipts:export"), async
         amount: receipt.amount_cents / 100,
         enteredBy: escapeExcelText(receipt.creator_name || "Former user"),
         imageLink: receipt.image_url
-          ? { text: "Open receipt image", hyperlink: receipt.image_url }
+          ? { text: "Open receipt attachment", hyperlink: receipt.image_url }
           : ""
       };
       for (const field of fields) row[`custom_${field.id}`] = escapeExcelText(customValues[String(field.id)] || "");
