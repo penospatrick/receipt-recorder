@@ -60,6 +60,16 @@ before(async () => {
   adminCookie = await login("admin", process.env.ACCOUNTING_PASSWORD);
 });
 
+test("homepage is served and Vercel rewrites the root to the app shell", async () => {
+  const response = await fetch(baseUrl);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/html/);
+  assert.match(await response.text(), /Zurich Finance Corporation/);
+
+  const vercelConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "vercel.json"), "utf8"));
+  assert.deepEqual(vercelConfig.rewrites, [{ source: "/", destination: "/index.html" }]);
+});
+
 after(async () => {
   if (server.httpServer) {
     server.httpServer.closeAllConnections();
