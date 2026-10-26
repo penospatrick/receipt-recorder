@@ -282,7 +282,8 @@ async function saveOneDriveAccountTokens(tokens, accountEmail, fallbackRefreshTo
       refresh_token = excluded.refresh_token,
       expires_at = excluded.expires_at,
       updated_at = CURRENT_TIMESTAMP
-  `).run(values);
+    RETURNING account_email
+  `).get(values);
   return values;
 }
 async function storeOneDriveTokens(tokens, accountEmail, preserveExistingRefreshToken = true) {
@@ -293,7 +294,8 @@ async function storeOneDriveTokens(tokens, accountEmail, preserveExistingRefresh
       INSERT INTO onedrive_accounts (account_email, access_token, refresh_token, expires_at)
       VALUES (LOWER(@account_email), @access_token, @refresh_token, @expires_at)
       ON CONFLICT (account_email) DO NOTHING
-    `).run(existing);
+      RETURNING account_email
+    `).get(existing);
   }
   const currentAccount = normalizeOneDriveAccountEmail(existing?.account_email) === normalizedEmail;
   const accountValues = await saveOneDriveAccountTokens(
@@ -1357,7 +1359,12 @@ app.get("/api/receipts/:id/image", requireAuth, async (request, response) => {
       {},
       receipt.onedrive_account_email
     );
-    if (!file.ok) return response.status(502).json({error:"Could not load attachment from OneDrive."});
+    if (!file.ok) {
+      const result = await file.json().catch(() => ({}));
+      return response.status(502).json({
+        error: result.error?.message || `Could not load attachment from OneDrive (HTTP ${file.status}).`
+      });
+    }
     const contentType = receipt.attachment_type || file.headers.get("content-type") || "application/octet-stream";
     const isImage = contentType.startsWith("image/");
     const name = (receipt.attachment_name || "receipt-attachment")

@@ -389,23 +389,54 @@ test("OneDrive connection uses organizational accounts and legacy image uploads 
       "2026-10-23", "OLD-ACCOUNT-001", "Old OneDrive account receipt", 1000, "{}",
       admin.id, "System Administrator", "previous-account-file-id", "previous@example.test"
     );
-    let deleteAuthorization;
+    await server.database.prepare(
+      "UPDATE onedrive_accounts SET expires_at = ? WHERE account_email = ?"
+    ).run(Date.now() - 1000, "previous@example.test");
+    const graphAuthorizations = [];
     global.fetch = async (url, options = {}) => {
       if (String(url).startsWith(baseUrl)) return originalFetch(url, options);
+      if (String(url).endsWith("/token")) {
+        return new Response(JSON.stringify({
+          access_token: "refreshed-previous-access-token",
+          refresh_token: "refreshed-previous-refresh-token",
+          expires_in: 3600
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       assert.match(String(url), /^https:\/\/graph\.microsoft\.com\/v1\.0\/me\/drive\/items\//);
-      deleteAuthorization = options.headers.get("Authorization");
+      graphAuthorizations.push(options.headers.get("Authorization"));
       if (String(url).endsWith("/legacy-unassigned-file-id")) {
         return new Response(JSON.stringify({ error: { code: "itemNotFound" } }), { status: 404 });
+      }
+      if (String(url).endsWith("/previous-account-file-id/content")) {
+        return new Response(Buffer.from("old account attachment"), {
+          status: 200, headers: { "content-type": "application/pdf" }
+        });
       }
       assert.equal(String(url), "https://graph.microsoft.com/v1.0/me/drive/items/previous-account-file-id");
       return new Response(null, { status: 204 });
     };
+    const attachment = await fetch(`${baseUrl}/api/receipts/${receipt.lastInsertRowid}/image`, {
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(attachment.status, 200);
+    assert.equal(attachment.headers.get("content-type"), "application/pdf");
+    assert.equal(await attachment.text(), "old account attachment");
     const deletedReceipt = await fetch(`${baseUrl}/api/receipts/${receipt.lastInsertRowid}`, {
       method: "DELETE",
       headers: { cookie: adminCookie }
     });
     assert.equal(deletedReceipt.status, 200);
-    assert.equal(deleteAuthorization, "Bearer previous-access-token");
+    assert.deepEqual(graphAuthorizations, [
+      "Bearer refreshed-previous-access-token",
+      "Bearer refreshed-previous-access-token"
+    ]);
+    const refreshedPreviousAccount = await server.database.prepare(
+      "SELECT access_token, refresh_token FROM onedrive_accounts WHERE account_email = ?"
+    ).get("previous@example.test");
+    assert.deepEqual(refreshedPreviousAccount, {
+      access_token: "refreshed-previous-access-token",
+      refresh_token: "refreshed-previous-refresh-token"
+    });
 
     const legacyReceipt = await server.database.prepare(`
       INSERT INTO receipts (
